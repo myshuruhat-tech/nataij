@@ -1,15 +1,50 @@
-// Cloudflare Worker: وسيط بين تطبيق نتايج و API-Football
-// المفتاح محفوظ كسر باسم API_FOOTBALL_KEY (Settings → Variables and Secrets) ولا يظهر في التطبيق ولا في GitHub.
+// Cloudflare Worker: وسيط بين تطبيق نتايج و ESPN (API غير رسمي، بدون مفتاح وبدون حد طلبات يومي ثابت)
 //
 // الطلب:  GET /fixtures?date=YYYY-MM-DD&tz=Africa/Mogadishu
-// الرد:   { matches: [ {lid, ts, state, short, elapsed, home, away, hs, as, hl, al} ] }
+// الرد:   { matches: [ {lid, ts, state, short, elapsed, home, away, hs, as, hl, al} ] }   (نفس الشكل القديم، فالتطبيق ما يتغيّر)
 
-const LEAGUE_IDS = [307, 2, 39, 140, 135, 78, 61]; // السعودي، أبطال أوروبا، إنجليزي، إسباني، إيطالي، ألماني، فرنسي
+// slug عند ESPN -> رقم الدوري اللي يعرفه التطبيق
+const LEAGUES = {
+  "ksa.1": 307,          // السعودي
+  "uefa.champions": 2,   // أبطال أوروبا
+  "eng.1": 39,           // إنجليزي
+  "esp.1": 140,          // إسباني
+  "ita.1": 135,          // إيطالي
+  "ger.1": 78,           // ألماني
+  "fra.1": 61,           // فرنسي
+};
 
-const LIVE = new Set(["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"]);
-const DONE = new Set(["FT", "AET", "PEN", "AWD", "WO"]);
+const ESPN = "https://site.api.espn.com/apis/site/v2/sports/soccer";
 
-// مدة الكاش بالثواني (تقدر تغيّرها من Variables بدون تعديل الكود)
+// حالة ESPN -> الكود القصير اللي يفهمه التطبيق
+const STATUS = {
+  STATUS_SCHEDULED: "NS",
+  STATUS_IN_PROGRESS: "LIVE",
+  STATUS_FIRST_HALF: "1H",
+  STATUS_SECOND_HALF: "2H",
+  STATUS_HALFTIME: "HT",
+  STATUS_END_OF_REGULATION: "BT",
+  STATUS_OVERTIME: "ET",
+  STATUS_FIRST_HALF_EXTRA_TIME: "ET",
+  STATUS_SECOND_HALF_EXTRA_TIME: "ET",
+  STATUS_END_OF_EXTRA_TIME: "BT",
+  STATUS_EXTRA_TIME_HALFTIME: "BT",
+  STATUS_SHOOTOUT: "P",
+  STATUS_FULL_TIME: "FT",
+  STATUS_FINAL: "FT",
+  STATUS_FINAL_AET: "AET",
+  STATUS_FINAL_PEN: "PEN",
+  STATUS_POSTPONED: "PST",
+  STATUS_CANCELED: "CANC",
+  STATUS_CANCELLED: "CANC",
+  STATUS_ABANDONED: "ABD",
+  STATUS_SUSPENDED: "SUSP",
+  STATUS_DELAYED: "INT",
+  STATUS_RAIN_DELAY: "INT",
+  STATUS_INTERRUPTED: "INT",
+  STATUS_FORFEIT: "AWD",
+};
+
 const ttl = (env, name, def) => Number(env[name]) || def;
 
 const json = (obj, status = 200, extra = {}) =>
@@ -18,22 +53,40 @@ const json = (obj, status = 200, extra = {}) =>
     headers: { "content-type": "application/json; charset=utf-8", ...extra },
   });
 
-function normalize(item) {
-  const short = item.fixture?.status?.short || "NS";
-  const state = LIVE.has(short) ? "in" : DONE.has(short) ? "post" : "pre";
+const ymd = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
+
+function normalize(ev, lid) {
+  const comp = ev.competitions?.[0] || {};
+  const type = ev.status?.type || {};
+  const short = STATUS[type.name] || (type.state === "in" ? "LIVE" : type.state === "post" ? "FT" : "NS");
+  const state = type.state === "in" ? "in" : type.state === "post" ? "post" : "pre";
+  const home = (comp.competitors || []).find((c) => c.homeAway === "home") || {};
+  const away = (comp.competitors || []).find((c) => c.homeAway === "away") || {};
+  const el = parseInt(String(ev.status?.displayClock || ""), 10);
+  const hasScore = state !== "pre";
+  const num = (v) => (hasScore && v != null && v !== "" ? Number(v) : null);
   return {
-    lid: item.league?.id,
-    ts: (item.fixture?.timestamp || 0) * 1000,
+    lid,
+    ts: Date.parse(ev.date) || 0,
     state,
     short,
-    elapsed: item.fixture?.status?.elapsed ?? null,
-    home: item.teams?.home?.name || "—",
-    away: item.teams?.away?.name || "—",
-    hs: item.goals?.home ?? null,
-    as: item.goals?.away ?? null,
-    hl: item.teams?.home?.logo || null,
-    al: item.teams?.away?.logo || null,
+    elapsed: state === "in" && Number.isFinite(el) ? el : null,
+    home: home.team?.displayName || home.team?.name || "—",
+    away: away.team?.displayName || away.team?.name || "—",
+    hs: num(home.score),
+    as: num(away.score),
+    hl: home.team?.logo || null,
+    al: away.team?.logo || null,
   };
+}
+
+async function fetchLeague(slug, from, to) {
+  const r = await fetch(`${ESPN}/${slug}/scoreboard?dates=${from}-${to}&limit=300`, {
+    headers: { "user-agent": "Mozilla/5.0", accept: "application/json" },
+  });
+  if (!r.ok) throw new Error(`http ${r.status}`);
+  const data = await r.json();
+  return (data.events || []).map((ev) => normalize(ev, LEAGUES[slug]));
 }
 
 export default {
@@ -46,7 +99,13 @@ export default {
     const tz = url.searchParams.get("tz") || "UTC";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: "bad_date" }, 400);
     if (!/^[A-Za-z_]+(\/[A-Za-z_+\-0-9]+){0,2}$/.test(tz)) return json({ error: "bad_tz" }, 400);
-    if (!env.API_FOOTBALL_KEY) return json({ error: "no_key" }, 500);
+
+    let fmt;
+    try {
+      fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+    } catch (e) {
+      return json({ error: "bad_tz" }, 400);
+    }
 
     // الكاش حسب (التاريخ + المنطقة) فقط، فكل المستخدمين يشاركون نفس الطلب
     const cache = caches.default;
@@ -56,45 +115,48 @@ export default {
     const hit = await cache.match(freshKey);
     if (hit) return hit;
 
-    let body;
-    try {
-      const api = `https://v3.football.api-sports.io/fixtures?date=${date}&timezone=${encodeURIComponent(tz)}`;
-      const r = await fetch(api, { headers: { "x-apisports-key": env.API_FOOTBALL_KEY } });
-      const data = await r.json();
+    // ESPN يقسّم الأيام بتوقيت أمريكا، فنجلب يوم قبل ويوم بعد ثم نفلتر بتاريخ منطقة المستخدم
+    const base = new Date(`${date}T12:00:00Z`);
+    const from = ymd(new Date(base.getTime() - 86400000));
+    const to = ymd(new Date(base.getTime() + 86400000));
 
-      const errs = data.errors && !Array.isArray(data.errors) ? Object.values(data.errors) : [];
-      if (!r.ok || errs.length) {
-        const msg = String(errs[0] || `http ${r.status}`);
-        const stale = await cache.match(staleKey);
-        if (stale) return stale;
-        const code = /free plans/i.test(msg) ? "plan_date" : /limit|request/i.test(msg) ? "quota" : "upstream";
-        return json({ error: code, detail: msg }, code === "plan_date" ? 403 : 502);
-      }
+    const results = await Promise.allSettled(Object.keys(LEAGUES).map((s) => fetchLeague(s, from, to)));
+    const failed = results.filter((r) => r.status === "rejected").length;
 
-      const matches = (data.response || [])
-        .filter((it) => LEAGUE_IDS.includes(it.league?.id))
-        .map(normalize);
-      body = { matches };
-    } catch (e) {
+    if (failed === results.length) {
       const stale = await cache.match(staleKey);
       if (stale) return stale;
       return json({ error: "upstream" }, 502);
     }
 
-    // إذا فيه مباراة مباشرة نحدّث أسرع، وغير كذا نكاشي أطول عشان نوفّر الـ 100 طلب
-    const anyLive = body.matches.some((m) => m.state === "in");
-    const anyPre = body.matches.some((m) => m.state === "pre");
-    const maxAge = anyLive
-      ? ttl(env, "LIVE_TTL", 300)
+    const seen = new Set();
+    const matches = results
+      .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
+      .filter((m) => fmt.format(new Date(m.ts)) === date)
+      .filter((m) => {
+        const k = `${m.lid}|${m.ts}|${m.home}|${m.away}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    const body = { matches };
+
+    // إذا فيه مباراة مباشرة نحدّث أسرع، وإذا بعض الدوريات فشلت نكاشي قليل عشان نعيد المحاولة
+    const anyLive = matches.some((m) => m.state === "in");
+    const anyPre = matches.some((m) => m.state === "pre");
+    const maxAge = failed
+      ? 60
+      : anyLive
+      ? ttl(env, "LIVE_TTL", 60)
       : anyPre
-      ? ttl(env, "UPCOMING_TTL", 900)
+      ? ttl(env, "UPCOMING_TTL", 600)
       : ttl(env, "DONE_TTL", 3600);
 
     const res = json(body, 200, { "cache-control": `public, max-age=${maxAge}` });
     ctx.waitUntil(cache.put(freshKey, res.clone()));
-    ctx.waitUntil(
-      cache.put(staleKey, json(body, 200, { "cache-control": "public, max-age=86400" }))
-    );
+    if (!failed) {
+      ctx.waitUntil(cache.put(staleKey, json(body, 200, { "cache-control": "public, max-age=86400" })));
+    }
     return res;
   },
 };

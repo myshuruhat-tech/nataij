@@ -1,4 +1,4 @@
-package com.example.nataij
+package com.example.ytblocker
 
 import android.app.Activity
 import android.graphics.Bitmap
@@ -28,7 +28,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.Executors
 
-class MainActivity : Activity() {
+class ResultsActivity : Activity() {
 
     companion object {
         // رابط الـ Worker من dash.cloudflare.com (بدون / في الآخر). غيّره بعد النشر.
@@ -254,7 +254,6 @@ class MainActivity : Activity() {
             val t = m.optLong("ts")
             val elapsed = if (m.isNull("elapsed")) "" else "${m.optInt("elapsed")}'"
             val status = when (short) {
-                "PST" -> "مؤجلة"
                 "CANC" -> "ملغاة"
                 "ABD" -> "متوقفة"
                 "SUSP", "INT" -> "متوقفة مؤقتًا"
@@ -296,7 +295,7 @@ class MainActivity : Activity() {
             else -> addMatches()
         }
         content.addView(
-            tv("البيانات من API-Football وقد تتأخر لحظات عن البث المباشر.", 11f, alpha(cMuted, 170)).apply { gravity = Gravity.CENTER },
+            tv("البيانات من ESPN وقد تتأخر لحظات عن البث المباشر.", 11f, alpha(cMuted, 170)).apply { gravity = Gravity.CENTER },
             lp(MATCH, WRAP, 28)
         )
         scroll.post { scroll.scrollTo(0, y) }

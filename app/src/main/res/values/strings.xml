@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">نتايج</string>
+    <string name="app_name">Tozy</string>
+    <string name="service_desc">خدمة تشغيل التطبيق Tozy</string>
 </resources>
