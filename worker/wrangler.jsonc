@@ -1,0 +1,8 @@
+{
+  // الاسم لازم يطابق اسم الـ Worker في Cloudflare
+  "name": "nataij-api",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true }
+  // المفتاح API_FOOTBALL_KEY يبقى Secret في لوحة Cloudflare ولا يُكتب هنا أبداً
+}
