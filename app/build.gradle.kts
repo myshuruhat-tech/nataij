@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.ytblocker"
+    namespace = "com.example.nataij"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.tozy.app"
+        applicationId = "com.example.nataij"
         minSdk = 24
         targetSdk = 34
         versionCode = 1

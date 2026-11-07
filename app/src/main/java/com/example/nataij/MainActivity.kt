@@ -32,7 +32,7 @@ class MainActivity : Activity() {
 
     companion object {
         // رابط الـ Worker من dash.cloudflare.com (بدون / في الآخر). غيّره بعد النشر.
-        const val WORKER_URL = "https://nataij-api.myshuruhat.workers.dev"
+        const val WORKER_URL = "https://nataij-api.CHANGE-ME.workers.dev"
     }
 
     private data class League(val slug: String, val name: String)
