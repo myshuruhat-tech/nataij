@@ -1,0 +1,46 @@
+name: Unzip
+on:
+  push:
+    paths: ['*.zip']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract zip files
+        run: |
+          shopt -s nullglob
+          zips=(*.zip)
+          if [ ${#zips[@]} -eq 0 ]; then echo "no zip files"; exit 0; fi
+          for z in "${zips[@]}"; do
+            tmp=$(mktemp -d)
+            unzip -q -o "$z" -d "$tmp"
+            rm -rf "$tmp/__MACOSX"
+            mapfile -t entries < <(ls -A "$tmp")
+            src="$tmp"
+            # إذا الـ zip فيه مجلد واحد بس، نفتح داخله
+            if [ ${#entries[@]} -eq 1 ] && [ -d "$tmp/${entries[0]}" ]; then src="$tmp/${entries[0]}"; fi
+            # مجلد .github نستثنيه لأن GITHUB_TOKEN ما يقدر يعدّل الـ workflows
+            rm -rf "$src/.github"
+            cp -a "$src"/. ./
+            git rm -q -f "$z"
+          done
+      - name: Commit
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          git commit -m "Extract zip"
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: Build APK
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build.yml || true
