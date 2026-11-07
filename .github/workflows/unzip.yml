@@ -9,10 +9,12 @@ permissions:
 jobs:
   unzip:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Extract zip files
         run: |
+          set -euo pipefail
           shopt -s nullglob
           zips=(*.zip)
           if [ ${#zips[@]} -eq 0 ]; then echo "no zip files"; exit 0; fi
@@ -32,6 +34,7 @@ jobs:
       - name: Commit
         id: commit
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
@@ -43,4 +46,4 @@ jobs:
         if: steps.commit.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run build.yml || true
+        run: gh workflow run build.yml --ref "${{ github.ref_name }}" || true
