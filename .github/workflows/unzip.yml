@@ -18,6 +18,13 @@ jobs:
           shopt -s nullglob
           zips=(*.zip)
           if [ ${#zips[@]} -eq 0 ]; then echo "no zip files"; exit 0; fi
+
+          # امسح كل محتوى الريبو الحالي ماعدا .git و .github والزيبات نفسها
+          # عشان كل رفعة زيب تستبدل المشروع بالكامل بدل ما تتراكم فوق ملفات قديمة
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name '.git' ! -name '.github' ! -name '*.zip' \
+            -exec rm -rf {} +
+
           for z in "${zips[@]}"; do
             tmp=$(mktemp -d)
             unzip -q -o "$z" -d "$tmp"
