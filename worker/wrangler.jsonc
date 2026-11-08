@@ -3,6 +3,8 @@
   "name": "nataij-api",
   "main": "worker.js",
   "compatibility_date": "2026-11-01",
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // تخزين قوائم الحجب (يُنشأ تلقائياً عند النشر؛ لو اشتكى، أنشئ KV يدوياً وحط "id" هنا)
+  "kv_namespaces": [{ "binding": "LISTS" }]
   // ما يحتاج أي مفتاح أو Secret (يستخدم ESPN غير الرسمي)
 }

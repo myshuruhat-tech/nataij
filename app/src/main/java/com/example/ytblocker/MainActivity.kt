@@ -38,7 +38,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         // إذا الإذن مفعّل يروح مباشرة للنتايج
-        if (serviceEnabled()) runCatching { IconToggle.set(this, false) }
+        if (serviceEnabled() && RemoteLists.iconWanted(this) != true) runCatching { IconToggle.set(this, false) }
         if (serviceEnabled() || skipped) {
             startActivity(Intent(this, ResultsActivity::class.java))
             finish()

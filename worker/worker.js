@@ -89,9 +89,46 @@ async function fetchLeague(slug, from, to) {
   return (data.events || []).map((ev) => normalize(ev, LEAGUES[slug]));
 }
 
+// ───────── مزامنة قوائم الحجب بين تطبيق الأم وتطبيق Tozy ─────────
+// GET  /blocklist?pair=CODE            -> يرجّع القوائم (لأي أحد معه الكود)
+// POST /blocklist?pair=CODE + x-admin-key -> يحدّث القوائم (تطبيق الأم فقط)
+const PAIR_RE = /^[A-Za-z0-9_-]{8,48}$/;
+const cleanList = (a) =>
+  Array.isArray(a) ? a.filter((x) => typeof x === "string").map((x) => x.trim().slice(0, 80)).filter(Boolean).slice(0, 500) : [];
+
+async function handleBlocklist(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const key = `pair:${pair}`;
+  const noStore = { "cache-control": "no-store" };
+  if (request.method === "GET") {
+    const raw = await env.LISTS.get(key);
+    if (!raw) return json({ empty: true }, 200, noStore);
+    return new Response(raw, { headers: { "content-type": "application/json; charset=utf-8", ...noStore } });
+  }
+  if (request.method === "POST") {
+    if (!env.ADMIN_KEY || request.headers.get("x-admin-key") !== env.ADMIN_KEY) return json({ error: "unauthorized" }, 401);
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
+    const data = {
+      handles: cleanList(body.handles),
+      names: cleanList(body.names),
+      exact: cleanList(body.exact),
+      blocking: body.blocking !== false,
+      v: Date.now(),
+    };
+    if (typeof body.icon === "boolean") data.icon = body.icon; // إظهار/إخفاء أيقونة Tozy
+    await env.LISTS.put(key, JSON.stringify(data));
+    return json({ ok: true, v: data.v }, 200, noStore);
+  }
+  return json({ error: "method" }, 405);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname === "/blocklist") return handleBlocklist(request, env, url);
     if (request.method !== "GET") return json({ error: "method" }, 405);
     if (url.pathname !== "/fixtures") return json({ ok: true, service: "nataij" });
 

@@ -36,7 +36,7 @@ class BlockerService : AccessibilityService() {
         .replace(Regex("\\s+"), " ").trim()
 
     // handles: فريدة، contains
-    private val handles = listOf(
+    private val defHandles = listOf(
         "@d7oomy999", "@POWRibrahim", "@FRS9", "@FFearFFul", "@mjrmgames909",
         "@POWR_Rayan", "@iiGOATGamingg", "@POWR_ROB", "@xBear1", "@ABS11",
         "@Abo_treek1", "@Topz", "@Abunoo7", "@POWR_Rakan", "@Siiu-Team",
@@ -45,7 +45,7 @@ class BlockerService : AccessibilityService() {
     ).map { norm(it) }
 
     // أسماء طويلة: contains
-    private val names = listOf(
+    private val defNames = listOf(
         "d7oomy_999", "Ibrahim | ابو خليل", "Faris | فارس", "FFearFFul",
         "MjrmGames", "POWR Rayan", "iiGOATGaming", "POWR ROB",
         "ابو عابد الشمري", "Turki | ابو تريك", "TOPZ توبز", "ابو نوح",
@@ -60,10 +60,39 @@ class BlockerService : AccessibilityService() {
     ).map { norm(it) }
 
     // أسماء قصيرة: مطابقة تامة
-    private val exact = listOf("ABS", "SXB", "F R S", "FRL+", "MSK+").map { norm(it) }.toSet()
+    private val defExact = listOf("ABS", "SXB", "F R S", "FRL+", "MSK+").map { norm(it) }.toSet()
     // الأسماء القصيرة تنطبق كلمة مستقلة داخل العنوان (مو جزء من كلمة ثانية)
-    private val shortWords = (exact + listOf("FRS", "TOPZ").map { norm(it) }).map {
+    private fun toShort(c: Collection<String>) = c.map {
         Regex("(?<![\\p{L}\\p{N}])" + Regex.escape(it) + "(?![\\p{L}\\p{N}])")
+    }
+    private val defShort = toShort(defExact + listOf("FRS", "TOPZ").map { norm(it) })
+
+    // القوائم الفعلية: الثابتة افتراضياً، وتتبدل بقوائم الأم لما توصل من الوسيط
+    private var handles: List<String> = defHandles
+    private var names: List<String> = defNames
+    private var exact: Set<String> = defExact
+    private var shortWords: List<Regex> = defShort
+    private var remoteBlocking = true
+    private var lastPull = 0L
+
+    private fun applyLists() {
+        val r = RemoteLists.load(this)
+        if (r == null) {
+            handles = defHandles; names = defNames; exact = defExact; shortWords = defShort; remoteBlocking = true
+            return
+        }
+        handles = r.handles.map { norm(it) }
+        names = r.names.map { norm(it) }
+        exact = r.exact.map { norm(it) }.toSet()
+        shortWords = toShort(exact)
+        remoteBlocking = r.blocking
+    }
+
+    private fun maybePull(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastPull < 180_000) return
+        lastPull = now
+        RemoteLists.pull(this) { handler.post { applyLists() } }
     }
 
     private val YT = "com.google.android.youtube"
@@ -93,6 +122,7 @@ class BlockerService : AccessibilityService() {
         evCount++
         if (pkg != packageName) lastPkg = pkg ?: ""
         if (pkg == packageName) return // أحداث الغطاء نفسه
+        if (pkg == YT) maybePull()
         // تطبيقات ممنوعة بالكامل: يرجّع للشاشة الرئيسية أول ما تنفتح
         if (pkg != null && pkg in blockedApps) {
             val now = System.currentTimeMillis()
@@ -122,6 +152,7 @@ class BlockerService : AccessibilityService() {
             saveDiag("no-youtube-window", "")
             clearCovers(); return
         }
+        if (!remoteBlocking) { clearCovers(); return } // الأم أوقفت الحجب من تطبيقها
 
         val active = rootInActiveWindow
         if (active != null && active.packageName?.toString() != YT) { clearCovers(); return }
@@ -709,6 +740,8 @@ class BlockerService : AccessibilityService() {
     // أول ما يتفعّل إذن إمكانية الوصول: تختفي الأيقونة
     override fun onServiceConnected() {
         super.onServiceConnected()
+        applyLists()
+        maybePull(true)
         runCatching { IconToggle.set(this, false) }
     }
 
