@@ -221,12 +221,50 @@ async function handleSearchLog(request, env, url) {
   return json({ error: "method" }, 405);
 }
 
+// ───────── سجل النشاط (مشاهدة/إخفاء/حجب): Tozy يرفع كل حدث، تطبيق الأم يقرأه ─────────
+// GET  /activity?pair=CODE          -> يرجّع آخر 500 حدث
+// POST /activity?pair=CODE + body: { type, kind, channel, label }
+const MAX_ACTIVITY_ENTRIES = 500;
+
+async function handleActivity(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const key = `activity:${pair}`;
+  const noStore = { "cache-control": "no-store" };
+  if (request.method === "GET") {
+    const raw = await env.LISTS.get(key);
+    return new Response(raw || '{"entries":[]}', { headers: { "content-type": "application/json; charset=utf-8", ...noStore } });
+  }
+  if (request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
+    const clean = (s, n) => (typeof s === "string" ? s.trim().slice(0, n) : "");
+    const type = clean(body.type, 20);
+    const kind = clean(body.kind, 10);
+    const channel = clean(body.channel, 120);
+    const label = clean(body.label, 200);
+    if (!type || !label) return json({ error: "bad_entry" }, 400);
+    const raw = await env.LISTS.get(key);
+    let store = { entries: [] };
+    if (raw) {
+      try { store = JSON.parse(raw); if (!Array.isArray(store.entries)) store.entries = []; } catch (e) { store = { entries: [] }; }
+    }
+    store.entries.unshift({ ts: new Date().toISOString(), type, kind, channel, label });
+    store.entries = store.entries.slice(0, MAX_ACTIVITY_ENTRIES);
+    await env.LISTS.put(key, JSON.stringify(store));
+    return json({ ok: true }, 200, noStore);
+  }
+  return json({ error: "method" }, 405);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/blocklist") return handleBlocklist(request, env, url);
     if (url.pathname === "/usage") return handleUsage(request, env, url);
     if (url.pathname === "/searchlog") return handleSearchLog(request, env, url);
+    if (url.pathname === "/activity") return handleActivity(request, env, url);
     if (request.method !== "GET") return json({ error: "method" }, 405);
     if (url.pathname !== "/fixtures") return json({ ok: true, service: "nataij" });
 

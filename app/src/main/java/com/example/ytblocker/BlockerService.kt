@@ -305,7 +305,10 @@ class BlockerService : AccessibilityService() {
         // سجل النشاط: نسجّل الرجوع لحظة وقوعه، وبطاقات التغطية الجديدة بس (مو كل تحديث)
         val curCoverKeys = keys.toMutableSet()
         for (i in keys.indices) {
-            if (keys[i] !in lastCoverKeys) addActivity("إخفاء", coverLabels.getOrElse(i) { keys[i] })
+            if (keys[i] !in lastCoverKeys) {
+                val lbl = coverLabels.getOrElse(i) { keys[i] }
+                addActivity("إخفاء", lbl, channel = lbl)
+            }
         }
         lastCoverKeys = curCoverKeys
 
@@ -318,7 +321,8 @@ class BlockerService : AccessibilityService() {
             val now = System.currentTimeMillis()
             if (now - lastBack > 3000) {
                 lastBack = now
-                addActivity("حجب", backLabel ?: "-")
+                val bl = backLabel ?: "-"
+                addActivity("حجب", bl, channel = bl)
                 // لو كان في مشغّل مصغّر قبل الرجوع (فيديو ثاني يشتغل) ما نلمسه
                 val hadMini = findNode(root, closeWords, true) != null
                 performGlobalAction(GLOBAL_ACTION_BACK)
@@ -638,7 +642,7 @@ class BlockerService : AccessibilityService() {
         lastWatchKey = key
         lastWatchTime = now
         if (same) return
-        addActivity("مشاهدة", if (extra.isNullOrBlank()) title else "$title — $extra")
+        addActivity("مشاهدة", if (extra.isNullOrBlank()) title else "$title — $extra", channel = extra ?: "")
     }
 
     // اكتشاف الفيديو المعروض حاليا من الشاشة نفسها (للتشغيل التلقائي والشورتس والروابط الخارجية)
@@ -725,8 +729,22 @@ class BlockerService : AccessibilityService() {
         return null
     }
 
-    private fun addActivity(type: String, label: String) {
-        // لا يتم تسجيل أي نشاط
+    private fun addActivity(type: String, label: String, kind: String = "", channel: String = "") {
+        val k = kind.ifBlank { if (norm(label).startsWith(norm("شورتس"))) "شورت" else "فيديو" }
+        val ch = channel.ifBlank { label }
+        Thread {
+            try {
+                val body = org.json.JSONObject().put("type", type).put("kind", k).put("channel", ch).put("label", label)
+                val c = java.net.URL("${RemoteLists.URL_BASE}/activity?pair=${RemoteLists.PAIR}").openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "POST"
+                c.connectTimeout = 8000; c.readTimeout = 8000
+                c.doOutput = true
+                c.setRequestProperty("content-type", "application/json")
+                c.outputStream.use { it.write(body.toString().toByteArray()) }
+                c.responseCode
+                c.disconnect()
+            } catch (e: Exception) { }
+        }.start()
     }
 
     private fun saveDiag(status: String, ids: String) {
