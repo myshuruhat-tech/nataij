@@ -73,12 +73,16 @@ class BlockerService : AccessibilityService() {
     private var exact: Set<String> = defExact
     private var shortWords: List<Regex> = defShort
     private var remoteBlocking = true
+    private var remoteFullBlockApps: Set<String> = emptySet()
+    private var remoteScanApps: Set<String> = emptySet()
+    private var remoteSearchApps: Set<String> = emptySet()
     private var lastPull = 0L
 
     private fun applyLists() {
         val r = RemoteLists.load(this)
         if (r == null) {
             handles = defHandles; names = defNames; exact = defExact; shortWords = defShort; remoteBlocking = true
+            remoteFullBlockApps = emptySet(); remoteScanApps = emptySet(); remoteSearchApps = emptySet()
             return
         }
         handles = r.handles.map { norm(it) }
@@ -86,6 +90,9 @@ class BlockerService : AccessibilityService() {
         exact = r.exact.map { norm(it) }.toSet()
         shortWords = toShort(exact)
         remoteBlocking = r.blocking
+        remoteFullBlockApps = r.fullBlockApps.map { it.lowercase() }.toSet()
+        remoteScanApps = r.scanApps.map { it.lowercase() }.toSet()
+        remoteSearchApps = r.searchApps.map { it.lowercase() }.toSet()
     }
 
     private fun maybePull(force: Boolean = false) {
@@ -110,8 +117,11 @@ class BlockerService : AccessibilityService() {
         return t in exact || shortWords.any { it.containsMatchIn(t) } || handles.any { t.contains(it) } || names.any { t.contains(it) }
     }
 
-    // كيك: التطبيق الرئيسي (جوال وتلفزيون) وتطبيق Go Live
-    private val blockedApps = setOf("com.kick.mobile", "com.kick.streaming")
+    // كيك: التطبيق الرئيسي (جوال وتلفزيون) وتطبيق Go Live، بالإضافة لأي تطبيقات تضيفها أمي من شاشتها
+    private val defBlockedApps = setOf("com.kick.mobile", "com.kick.streaming")
+    private fun blockedApps() = defBlockedApps + remoteFullBlockApps
+    // تطبيقات يُفحص محتواها بنفس قوائم القنوات/الأسماء أعلاه (يوتيوب له مساره المفصّل، هذا للباقي)
+    private fun scanApps() = remoteScanApps - YT
     private var lastAppBlock = 0L
 
     private var evCount = 0
@@ -123,8 +133,12 @@ class BlockerService : AccessibilityService() {
         if (pkg != packageName) lastPkg = pkg ?: ""
         if (pkg == packageName) return // أحداث الغطاء نفسه
         if (pkg == YT) maybePull()
+        // سجل البحث: نفحص فقط لو التطبيق ضمن قائمة أمي للبحث، وفقط أحداث تغيّر النص
+        if (pkg != null && e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pkg in remoteSearchApps) {
+            e.source?.let { SearchLog.onFocusedTextChanged(this, pkg, it, remoteSearchApps) }
+        }
         // تطبيقات ممنوعة بالكامل: يرجّع للشاشة الرئيسية أول ما تنفتح
-        if (pkg != null && pkg in blockedApps) {
+        if (pkg != null && pkg in blockedApps()) {
             val now = System.currentTimeMillis()
             if (now - lastAppBlock > 900) {
                 lastAppBlock = now
@@ -134,11 +148,74 @@ class BlockerService : AccessibilityService() {
             }
             return
         }
+        // تطبيقات فحص عامة (غير يوتيوب): تغطية بسيطة لأي نص يطابق القوائم المحظورة
+        if (pkg != null && pkg in scanApps()) {
+            if (!genericPending) { genericPending = true; handler.postDelayed(genericRefresh, 100) }
+            return
+        }
         if (pkg == YT && e.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) handleClick(e)
         // أحداث الكيبورد/النظام ما تمسح الأغطية (كانت تمسحها بعد البحث)؛ update() يمسحها لو يوتيوب ما عاد ظاهر
-        if (pkg != YT && covers.isEmpty()) return
+        if (pkg != YT && covers.isEmpty() && genericCovers.isEmpty()) return
         // throttle بدل debounce: التحديث يصير حتى لو يوتيوب يرسل أحداث بلا توقف
         if (!pending) { pending = true; handler.postDelayed(refresh, 80) }
+    }
+
+    // ───────── فحص عام لتطبيقات scanApps: يغطي أي نص مطابق بدون منطق يوتيوب التفصيلي ─────────
+    private var genericPending = false
+    private val genericCovers = mutableListOf<View>()
+    private val genericRefresh = Runnable { genericPending = false; updateGeneric() }
+
+    private fun updateGeneric() {
+        val active = rootInActiveWindow
+        val pkg = active?.packageName?.toString()
+        if (pkg == null || pkg !in scanApps() || !remoteBlocking) { clearGenericCovers(); return }
+        val rects = mutableListOf<Rect>()
+        val screenRect = Rect(0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        fun collect(n: AccessibilityNodeInfo?) {
+            if (n == null) return
+            val t = n.text?.toString() ?: n.contentDescription?.toString()
+            if (t != null && matches(t)) {
+                var card: AccessibilityNodeInfo? = n
+                while (card != null && !card.isClickable) card = card.parent
+                val target = card ?: n
+                val r = Rect(); target.getBoundsInScreen(r)
+                if (!r.isEmpty && Rect.intersects(r, screenRect)) rects.add(r)
+                return
+            }
+            for (i in 0 until n.childCount) collect(n.getChild(i))
+        }
+        collect(active)
+        showGenericCovers(rects)
+    }
+
+    private fun showGenericCovers(rects: List<Rect>) {
+        while (genericCovers.size > rects.size) {
+            runCatching { wm.removeView(genericCovers.removeAt(genericCovers.lastIndex)) }
+        }
+        rects.forEachIndexed { i, r ->
+            val lp = WindowManager.LayoutParams(
+                r.width(), r.height(),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                PixelFormat.OPAQUE
+            ).apply { gravity = Gravity.TOP or Gravity.START; x = r.left; y = r.top }
+            if (i < genericCovers.size) wm.updateViewLayout(genericCovers[i], lp)
+            else {
+                val v = View(this).apply { setBackgroundColor(coverColor()) }
+                wm.addView(v, lp)
+                genericCovers.add(v)
+            }
+        }
+    }
+
+    private fun clearGenericCovers() {
+        handler.removeCallbacks(genericRefresh)
+        genericPending = false
+        genericCovers.forEach { runCatching { wm.removeView(it) } }
+        genericCovers.clear()
     }
 
     private val watchKeys = listOf("watch_player", "watch_while", "player_view", "player_fragment", "watch_list")
@@ -743,6 +820,7 @@ class BlockerService : AccessibilityService() {
         applyLists()
         maybePull(true)
         runCatching { IconToggle.set(this, false) }
+        handler.post(usagePush)
     }
 
     // فتح التطبيق وهو مخفي: صوت-، صوت-، صوت+، صوت+، صوت- خلال 4 ثواني
@@ -775,10 +853,21 @@ class BlockerService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         runCatching { IconToggle.set(this, true) }
         clearCovers()
+        clearGenericCovers()
+        handler.removeCallbacks(usagePush)
         return super.onUnbind(intent)
     }
 
     override fun onInterrupt() {
         clearCovers()
+        clearGenericCovers()
+    }
+
+    // ───────── رفع تقرير استخدام التطبيقات دوريًا عشان شاشة أمي تشوفه ─────────
+    private val usagePush = object : Runnable {
+        override fun run() {
+            UsageReport.push(this@BlockerService)
+            handler.postDelayed(this, 20 * 60_000)
+        }
     }
 }

@@ -7,10 +7,15 @@ import java.net.URL
 
 // يجلب قوائم الحجب من الوسيط (اللي تحدّثه شاشة تطبيق الأم) ويحفظ آخر نسخة
 object RemoteLists {
-    private const val URL_BASE = "https://nataij-api.myshuruhat.workers.dev"
-    private const val PAIR = "xeb3vuyM0FOa"
+    // غير private عشان UsageReport يستخدمهم لنفس الوسيط/كود الربط
+    const val URL_BASE = "https://nataij-api.myshuruhat.workers.dev"
+    const val PAIR = "xeb3vuyM0FOa"
 
-    class Data(val handles: List<String>, val names: List<String>, val exact: List<String>, val blocking: Boolean)
+    class Data(
+        val handles: List<String>, val names: List<String>, val exact: List<String>, val blocking: Boolean,
+        val fullBlockApps: List<String> = emptyList(), val scanApps: List<String> = emptyList(),
+        val searchApps: List<String> = emptyList()
+    )
 
     private fun p(ctx: Context) = ctx.getSharedPreferences("remote", Context.MODE_PRIVATE)
 
@@ -22,7 +27,7 @@ object RemoteLists {
         return try {
             val o = JSONObject(raw)
             fun l(k: String): List<String> { val a = o.optJSONArray(k) ?: return emptyList(); return (0 until a.length()).map { a.getString(it) } }
-            Data(l("handles"), l("names"), l("exact"), o.optBoolean("blocking", true))
+            Data(l("handles"), l("names"), l("exact"), o.optBoolean("blocking", true), l("fullBlockApps"), l("scanApps"), l("searchApps"))
         } catch (e: Exception) { null }
     }
 

@@ -40,9 +40,52 @@ class MainActivity : Activity() {
         // إذا الإذن مفعّل يروح مباشرة للنتايج
         if (serviceEnabled() && RemoteLists.iconWanted(this) != true) runCatching { IconToggle.set(this, false) }
         if (serviceEnabled() || skipped) {
+            // خطوة إضافية اختيارية (تُعرض مرة وحدة): صلاحية الاستخدام عشان تقرير الاستخدام يشتغل
+            if (serviceEnabled() && !UsageReport.hasPermission(this) && !usagePromptDone()) {
+                setContentView(usagePermissionScreen())
+                return
+            }
             startActivity(Intent(this, ResultsActivity::class.java))
             finish()
         }
+    }
+
+    private fun usagePrefs() = getSharedPreferences("remote", MODE_PRIVATE)
+    private fun usagePromptDone() = usagePrefs().getBoolean("usage_prompt_done", false)
+    private fun markUsagePromptDone() = usagePrefs().edit().putBoolean("usage_prompt_done", true).apply()
+
+    private fun usagePermissionScreen(): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(cBg)
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(26), dp(22), dp(26))
+            background = GradientDrawable().apply {
+                setColor(cCard)
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), cStroke)
+            }
+        }
+        card.addView(text("صلاحية إضافية (اختيارية)", 20f, cText, true))
+        card.addView(text("لو تبي تقرير استخدام التطبيقات يصل، فعّل صلاحية «الوصول لبيانات الاستخدام». تقدر تتخطاها.", 14f, cMuted).apply {
+            setPadding(0, dp(10), 0, dp(20))
+        })
+        card.addView(text("فتح الإعدادات", 15f, Color.BLACK, true).apply {
+            setPadding(dp(16), dp(13), dp(16), dp(13))
+            background = GradientDrawable().apply { setColor(cMint); cornerRadius = dp(100).toFloat() }
+            setOnClickListener { runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) } }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        card.addView(text("تخطي", 13f, cMuted).apply {
+            setPadding(dp(16), dp(16), dp(16), 0)
+            setOnClickListener { markUsagePromptDone(); onResume() }
+        })
+        root.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return root
     }
 
     private fun serviceEnabled(): Boolean {

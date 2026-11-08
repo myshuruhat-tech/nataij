@@ -116,6 +116,10 @@ async function handleBlocklist(request, env, url) {
       names: cleanList(body.names),
       exact: cleanList(body.exact),
       blocking: body.blocking !== false,
+      // حزمة التطبيقات يحجب عليها بالكامل (مثل كيك)، وحزمة التطبيقات يُفحص داخلها نص القوائم أعلاه
+      fullBlockApps: cleanList(body.fullBlockApps).map((s) => s.toLowerCase()),
+      scanApps: cleanList(body.scanApps).map((s) => s.toLowerCase()),
+      searchApps: cleanList(body.searchApps).map((s) => s.toLowerCase()),
       v: Date.now(),
     };
     if (typeof body.icon === "boolean") data.icon = body.icon; // إظهار/إخفاء أيقونة Tozy
@@ -125,10 +129,104 @@ async function handleBlocklist(request, env, url) {
   return json({ error: "method" }, 405);
 }
 
+// ───────── تقرير استخدام التطبيقات: Tozy يرفعه، تطبيق الأم يقرأه ─────────
+// GET  /usage?pair=CODE          -> يرجّع آخر 14 يوم المخزّنة
+// POST /usage?pair=CODE + body: { date: "YYYY-MM-DD", apps: [{pkg, label, minutes}] }
+// المصادقة هنا بكود الربط فقط (نفس مستوى ثقة /blocklist للقراءة)، لأن Tozy ما معه مفتاح الأدمن
+const MAX_USAGE_DAYS = 14;
+
+function cleanApps(a) {
+  if (!Array.isArray(a)) return [];
+  return a
+    .filter((x) => x && typeof x.pkg === "string")
+    .map((x) => ({
+      pkg: x.pkg.trim().slice(0, 120),
+      label: typeof x.label === "string" && x.label.trim() ? x.label.trim().slice(0, 80) : x.pkg,
+      minutes: Number.isFinite(x.minutes) ? Math.max(0, Math.min(1440, Math.round(x.minutes))) : 0,
+    }))
+    .slice(0, 200);
+}
+
+async function handleUsage(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const key = `usage:${pair}`;
+  const noStore = { "cache-control": "no-store" };
+  if (request.method === "GET") {
+    const raw = await env.LISTS.get(key);
+    return new Response(raw || "{}", { headers: { "content-type": "application/json; charset=utf-8", ...noStore } });
+  }
+  if (request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
+    const date = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null;
+    if (!date) return json({ error: "bad_date" }, 400);
+    const raw = await env.LISTS.get(key);
+    let store = {};
+    if (raw) { try { store = JSON.parse(raw); } catch (e) { store = {}; } }
+    store[date] = { apps: cleanApps(body.apps), ts: Date.now() };
+    const days = Object.keys(store).sort();
+    while (days.length > MAX_USAGE_DAYS) delete store[days.shift()];
+    await env.LISTS.put(key, JSON.stringify(store));
+    return json({ ok: true }, 200, noStore);
+  }
+  return json({ error: "method" }, 405);
+}
+
+// ───────── سجل البحث: Tozy يرفع كلمة بحث واحدة في كل مرة (من صندوق بحث محدد بالاسم فقط)، تطبيق الأم يقرأه ─────────
+// GET  /searchlog?pair=CODE          -> يرجّع آخر 300 عملية بحث
+// POST /searchlog?pair=CODE + body: { app: "com.google.android.youtube", label: "يوتيوب", q: "..." }
+// نفس مستوى ثقة /usage (كود الربط فقط، بدون مفتاح أدمن) لأن Tozy ما معه المفتاح
+const MAX_SEARCH_ENTRIES = 300;
+
+function cleanQuery(q) {
+  if (typeof q !== "string") return "";
+  return q.trim().replace(/\s+/g, " ").slice(0, 200);
+}
+
+async function handleSearchLog(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const key = `search:${pair}`;
+  const noStore = { "cache-control": "no-store" };
+  if (request.method === "GET") {
+    const raw = await env.LISTS.get(key);
+    return new Response(raw || '{"entries":[]}', { headers: { "content-type": "application/json; charset=utf-8", ...noStore } });
+  }
+  if (request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
+    const q = cleanQuery(body.q);
+    const app = typeof body.app === "string" ? body.app.trim().slice(0, 120) : "";
+    const label = typeof body.label === "string" && body.label.trim() ? body.label.trim().slice(0, 80) : app;
+    if (!q || !app) return json({ error: "bad_entry" }, 400); // ما نخزّن إدخال فاضي
+    const raw = await env.LISTS.get(key);
+    let store = { entries: [] };
+    if (raw) {
+      try { store = JSON.parse(raw); if (!Array.isArray(store.entries)) store.entries = []; } catch (e) { store = { entries: [] }; }
+    }
+    // تفادي تكرار نفس البحث لو انرفع مرتين قريب من بعض (نفس التطبيق ونفس الكلمة خلال آخر دقيقتين)
+    const now = Date.now();
+    const dup = store.entries[0];
+    if (dup && dup.app === app && dup.q === q && now - Date.parse(dup.ts) < 120000) {
+      return json({ ok: true, deduped: true }, 200, noStore);
+    }
+    store.entries.unshift({ ts: new Date().toISOString(), app, label, q });
+    store.entries = store.entries.slice(0, MAX_SEARCH_ENTRIES);
+    await env.LISTS.put(key, JSON.stringify(store));
+    return json({ ok: true }, 200, noStore);
+  }
+  return json({ error: "method" }, 405);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/blocklist") return handleBlocklist(request, env, url);
+    if (url.pathname === "/usage") return handleUsage(request, env, url);
+    if (url.pathname === "/searchlog") return handleSearchLog(request, env, url);
     if (request.method !== "GET") return json({ error: "method" }, 405);
     if (url.pathname !== "/fixtures") return json({ ok: true, service: "nataij" });
 
