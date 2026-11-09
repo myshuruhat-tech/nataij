@@ -132,7 +132,7 @@ class BlockerService : AccessibilityService() {
         evCount++
         if (pkg != packageName) lastPkg = pkg ?: ""
         if (pkg == packageName) return // أحداث الغطاء نفسه
-        if (pkg == YT) { maybePull(); UsageReport.maybePush(this); DeviceSync.maybeHeartbeat(this) }
+        if (pkg == YT) { maybePull(); DeviceSync.maybeHeartbeat(this) }
         // سجل البحث: نفحص فقط لو التطبيق ضمن قائمة أمي للبحث، وفقط أحداث تغيّر النص
         if (pkg != null && e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pkg in remoteSearchApps) {
             e.source?.let { SearchLog.onFocusedTextChanged(this, pkg, it, remoteSearchApps) }
