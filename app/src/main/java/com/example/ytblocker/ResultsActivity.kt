@@ -38,6 +38,8 @@ class ResultsActivity : Activity() {
     private data class League(val slug: String, val name: String)
 
     private data class Match(
+        val id: String,
+        val slug: String,
         val league: String,
         val timeMs: Long,
         val state: String,        // pre / in / post
@@ -104,6 +106,10 @@ class ResultsActivity : Activity() {
         }
         scroll.addView(content, ViewGroup.LayoutParams(MATCH, WRAP))
         setContentView(scroll)
+        GoalAlarm.scheduleRepeating(this)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            try { requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 701) } catch (e: Exception) { }
+        }
     }
 
     override fun onResume() {
@@ -271,6 +277,7 @@ class ResultsActivity : Activity() {
             fun str(k: String) = if (m.isNull(k)) "0" else m.optInt(k).toString()
             list.add(
                 Match(
+                    m.optString("id"), m.optString("slug"),
                     names[lid] ?: "", t, state, status,
                     ar(m.optString("home", "—")), ar(m.optString("away", "—")),
                     str("hs"), str("as"),
@@ -413,6 +420,16 @@ class ResultsActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(14))
             background = bg(cCard, 18f, if (m.state == "in") alpha(cLive, 110) else cStroke)
+            isClickable = m.id.isNotBlank() && m.slug.isNotBlank()
+            if (isClickable) setOnClickListener {
+                val i = android.content.Intent(this@ResultsActivity, MatchActivity::class.java)
+                i.putExtra(MatchActivity.EXTRA_ID, m.id)
+                i.putExtra(MatchActivity.EXTRA_SLUG, m.slug)
+                i.putExtra(MatchActivity.EXTRA_HOME, m.homeName)
+                i.putExtra(MatchActivity.EXTRA_AWAY, m.awayName)
+                i.putExtra(MatchActivity.EXTRA_STATUS, m.statusText)
+                startActivity(i)
+            }
         }
         card.addView(pill(m.statusText, statusColor, 11f), LinearLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.CENTER_HORIZONTAL })
 
@@ -455,6 +472,18 @@ class ResultsActivity : Activity() {
             },
             lp(MATCH, WRAP, 6)
         )
+        if (name.isNotBlank() && name != "—") {
+            val star = tv(if (GoalAlarm.isFollowed(this, name)) "★" else "☆", 16f, if (GoalAlarm.isFollowed(this, name)) cMint else cMuted)
+            star.gravity = Gravity.CENTER
+            star.isClickable = true
+            star.setPadding(dp(8), dp(4), dp(8), dp(4))
+            star.setOnClickListener {
+                val nowFollowing = GoalAlarm.toggleFollow(this, name)
+                star.text = if (nowFollowing) "★" else "☆"
+                star.setTextColor(if (nowFollowing) cMint else cMuted)
+            }
+            col.addView(star, lp(WRAP, WRAP, 4).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        }
         return col
     }
 

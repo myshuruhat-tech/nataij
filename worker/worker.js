@@ -15,6 +15,7 @@ const LEAGUES = {
 };
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/soccer";
+const LEAGUE_SLUG_BY_LID = Object.fromEntries(Object.entries(LEAGUES).map(([slug, lid]) => [lid, slug]));
 
 // حالة ESPN -> الكود القصير اللي يفهمه التطبيق
 const STATUS = {
@@ -66,6 +67,8 @@ function normalize(ev, lid) {
   const hasScore = state !== "pre";
   const num = (v) => (hasScore && v != null && v !== "" ? Number(v) : null);
   return {
+    id: ev.id || null,
+    slug: LEAGUE_SLUG_BY_LID[lid] || null,
     lid,
     ts: Date.parse(ev.date) || 0,
     state,
@@ -258,44 +261,61 @@ async function handleActivity(request, env, url) {
   return json({ error: "method" }, 405);
 }
 
-// ───────── الأجهزة: كل جهاز Tozy يسجّل نفسه، والأم تتحكم بحجب كل جهاز لحاله ─────────
-// POST /devices?pair=CODE  body:{id,name}            -> تسجيل/نبض دوري (أي جهاز، بدون مفتاح)
-// POST /devices?pair=CODE  body:{id,blocking} + key   -> تغيير حالة الحجب لجهاز معيّن (الأم فقط)
-// GET  /devices?pair=CODE                             -> قائمة الأجهزة
-const DEV_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
-async function handleDevices(request, env, url) {
-  const pair = url.searchParams.get("pair") || "";
-  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
-  if (!env.LISTS) return json({ error: "no_kv" }, 500);
-  const key = `devices:${pair}`;
-  const noStore = { "cache-control": "no-store" };
-  if (request.method === "GET") {
-    const raw = await env.LISTS.get(key);
-    const map = raw ? JSON.parse(raw) : {};
-    const devices = Object.keys(map).map((id) => ({ id, ...map[id] }));
-    return json({ devices }, 200, noStore);
+// ───────── تفاصيل مباراة: تشكيلة + إحصائيات بسيطة + تعليق دقيقة بدقيقة ─────────
+// GET /match?id=EVENT_ID&slug=eng.1
+async function handleMatch(url) {
+  const id = url.searchParams.get("id") || "";
+  const slug = url.searchParams.get("slug") || "";
+  if (!/^\d+$/.test(id) || !LEAGUES[slug]) return json({ error: "bad_params" }, 400);
+
+  const cache = caches.default;
+  const cacheKey = new Request(`https://cache.nataij/match/${slug}/${id}`);
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  let data;
+  try {
+    const r = await fetch(`${ESPN}/${slug}/summary?event=${id}`, {
+      headers: { "user-agent": "Mozilla/5.0", accept: "application/json" },
+    });
+    if (!r.ok) throw new Error(`http ${r.status}`);
+    data = await r.json();
+  } catch (e) {
+    return json({ error: "upstream" }, 502);
   }
-  if (request.method === "POST") {
-    let body;
-    try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
-    const id = typeof body.id === "string" ? body.id.trim() : "";
-    if (!DEV_ID_RE.test(id)) return json({ error: "bad_id" }, 400);
-    const raw = await env.LISTS.get(key);
-    const map = raw ? JSON.parse(raw) : {};
-    const isAdmin = !!env.ADMIN_KEY && request.headers.get("x-admin-key") === env.ADMIN_KEY;
-    if (isAdmin) {
-      if (!map[id]) return json({ error: "not_found" }, 404);
-      map[id].blocking = body.blocking !== false;
-    } else {
-      // نبض دوري من جهاز Tozy: يسجّل نفسه ويحدّث آخر ظهور، بدون ما يلمس حالة الحجب
-      const name = typeof body.name === "string" ? body.name.trim().slice(0, 40) : "جهاز";
-      const existing = map[id];
-      map[id] = { name, blocking: existing ? existing.blocking : true, lastSeen: Date.now() };
-    }
-    await env.LISTS.put(key, JSON.stringify(map));
-    return json({ ok: true, blocking: map[id]?.blocking !== false }, 200, noStore);
+
+  // التعليق: الأحدث أول
+  const commentary = (data.commentary || [])
+    .map((c) => ({ t: c.time?.displayValue || "", text: c.text || "" }))
+    .filter((c) => c.text)
+    .slice(0, 60);
+
+  // التشكيلة: لكل فريق، الأساسيين فقط
+  const lineups = (data.rosters || []).map((t) => ({
+    team: t.team?.displayName || t.team?.name || "—",
+    formation: t.formation || null,
+    starters: (t.roster || [])
+      .filter((p) => p.starter)
+      .map((p) => ({ name: p.athlete?.displayName || "—", num: p.jersey || "", pos: p.position?.abbreviation || "" })),
+  }));
+
+  // إحصائيات بسيطة من الـ boxscore
+  const teamsStats = data.boxscore?.teams || [];
+  const statsByName = {};
+  (teamsStats[0]?.statistics || []).forEach((s) => { statsByName[s.name || s.label] = { label: s.label || s.name, home: s.displayValue }; });
+  (teamsStats[1]?.statistics || []).forEach((s) => {
+    const k = s.name || s.label;
+    if (statsByName[k]) statsByName[k].away = s.displayValue;
+    else statsByName[k] = { label: s.label || s.name, home: "-", away: s.displayValue };
+  });
+  const stats = Object.values(statsByName);
+
+  const body = { commentary, lineups, stats };
+  const res = json(body, 200, { "cache-control": "public, max-age=25" });
+  if (commentary.length || lineups.length || stats.length) {
+    cache.put(cacheKey, json(body, 200, { "cache-control": "public, max-age=25" })).catch(() => {});
   }
-  return json({ error: "method" }, 405);
+  return res;
 }
 
 export default {
@@ -303,9 +323,9 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/blocklist") return handleBlocklist(request, env, url);
     if (url.pathname === "/usage") return handleUsage(request, env, url);
-    if (url.pathname === "/devices") return handleDevices(request, env, url);
     if (url.pathname === "/searchlog") return handleSearchLog(request, env, url);
     if (url.pathname === "/activity") return handleActivity(request, env, url);
+    if (url.pathname === "/match") return handleMatch(url);
     if (request.method !== "GET") return json({ error: "method" }, 405);
     if (url.pathname !== "/fixtures") return json({ ok: true, service: "nataij" });
 

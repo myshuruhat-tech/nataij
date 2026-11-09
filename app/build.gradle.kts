@@ -7,17 +7,6 @@ android {
     namespace = "com.example.ytblocker"
     compileSdk = 34
 
-    signingConfigs {
-        getByName("debug") {
-            // مفتاح ثابت ومحفوظ بالمستودع، عشان التوقيع يضل نفسه بكل بناء
-            // وتقدر تثبّت أي نسخة جديدة فوق القديمة بدون ما تحذفها أول
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-        }
-    }
-
     defaultConfig {
         applicationId = "com.tozy.app"
         minSdk = 24
@@ -32,10 +21,5 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
-    }
-    buildTypes {
-        getByName("debug") {
-            signingConfig = signingConfigs.getByName("debug")
-        }
     }
 }

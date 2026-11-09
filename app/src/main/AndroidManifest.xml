@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- اختيارية: تُمنح يدويًا من شاشة إعدادات النظام، لتقرير استخدام التطبيقات -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <!-- إشعار عند هدف لفريق متابَع -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -44,6 +46,9 @@
         </receiver>
 
         <activity android:name=".ResultsActivity" android:exported="false" />
+        <activity android:name=".MatchActivity" android:exported="false" />
+
+        <receiver android:name=".GoalCheckReceiver" android:exported="false" />
 
         <service
             android:name=".BlockerService"

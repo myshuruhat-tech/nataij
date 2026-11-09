@@ -132,13 +132,13 @@ class BlockerService : AccessibilityService() {
         evCount++
         if (pkg != packageName) lastPkg = pkg ?: ""
         if (pkg == packageName) return // أحداث الغطاء نفسه
-        if (pkg == YT) { maybePull(); DeviceSync.maybeHeartbeat(this) }
+        if (pkg == YT) maybePull()
         // سجل البحث: نفحص فقط لو التطبيق ضمن قائمة أمي للبحث، وفقط أحداث تغيّر النص
         if (pkg != null && e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pkg in remoteSearchApps) {
             e.source?.let { SearchLog.onFocusedTextChanged(this, pkg, it, remoteSearchApps) }
         }
         // تطبيقات ممنوعة بالكامل: يرجّع للشاشة الرئيسية أول ما تنفتح
-        if (pkg != null && DeviceSync.isBlockingOnThisDevice() && pkg in blockedApps()) {
+        if (pkg != null && pkg in blockedApps()) {
             val now = System.currentTimeMillis()
             if (now - lastAppBlock > 900) {
                 lastAppBlock = now
@@ -168,7 +168,7 @@ class BlockerService : AccessibilityService() {
     private fun updateGeneric() {
         val active = rootInActiveWindow
         val pkg = active?.packageName?.toString()
-        if (pkg == null || pkg !in scanApps() || !remoteBlocking || !DeviceSync.isBlockingOnThisDevice()) { clearGenericCovers(); return }
+        if (pkg == null || pkg !in scanApps() || !remoteBlocking) { clearGenericCovers(); return }
         val rects = mutableListOf<Rect>()
         val screenRect = Rect(0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
         fun collect(n: AccessibilityNodeInfo?) {
@@ -229,7 +229,7 @@ class BlockerService : AccessibilityService() {
             saveDiag("no-youtube-window", "")
             clearCovers(); return
         }
-        if (!remoteBlocking || !DeviceSync.isBlockingOnThisDevice()) { clearCovers(); return } // الأم أوقفت الحجب (عام أو لهذا الجهاز بالذات)
+        if (!remoteBlocking) { clearCovers(); return } // الأم أوقفت الحجب من تطبيقها
 
         val active = rootInActiveWindow
         if (active != null && active.packageName?.toString() != YT) { clearCovers(); return }
@@ -837,7 +837,6 @@ class BlockerService : AccessibilityService() {
         super.onServiceConnected()
         applyLists()
         maybePull(true)
-        DeviceSync.maybeHeartbeat(this, force = true)
         runCatching { IconToggle.set(this, false) }
         handler.post(usagePush)
     }
