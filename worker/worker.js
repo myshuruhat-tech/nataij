@@ -57,15 +57,12 @@ const ymd = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
 
 function normalize(ev, lid) {
   const comp = ev.competitions?.[0] || {};
-  // الحالة الفعلية (مباشر/منتهية) تجي من مستوى المنافسة (competitions[0].status)
-  // في أغلب استجابات ESPN، مو من مستوى المباراة العام — لو اعتمدنا على ev.status بس
-  // وما كان موجود، الحالة تضل "pre" للأبد حتى لو المباراة بدأت فعلاً.
-  const type = comp.status?.type || ev.status?.type || {};
+  const type = ev.status?.type || {};
   const short = STATUS[type.name] || (type.state === "in" ? "LIVE" : type.state === "post" ? "FT" : "NS");
   const state = type.state === "in" ? "in" : type.state === "post" ? "post" : "pre";
   const home = (comp.competitors || []).find((c) => c.homeAway === "home") || {};
   const away = (comp.competitors || []).find((c) => c.homeAway === "away") || {};
-  const el = parseInt(String(comp.status?.displayClock || ev.status?.displayClock || ""), 10);
+  const el = parseInt(String(ev.status?.displayClock || ""), 10);
   const hasScore = state !== "pre";
   const num = (v) => (hasScore && v != null && v !== "" ? Number(v) : null);
   return {
@@ -261,11 +258,52 @@ async function handleActivity(request, env, url) {
   return json({ error: "method" }, 405);
 }
 
+// ───────── الأجهزة: كل جهاز Tozy يسجّل نفسه، والأم تتحكم بحجب كل جهاز لحاله ─────────
+// POST /devices?pair=CODE  body:{id,name}            -> تسجيل/نبض دوري (أي جهاز، بدون مفتاح)
+// POST /devices?pair=CODE  body:{id,blocking} + key   -> تغيير حالة الحجب لجهاز معيّن (الأم فقط)
+// GET  /devices?pair=CODE                             -> قائمة الأجهزة
+const DEV_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+async function handleDevices(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const key = `devices:${pair}`;
+  const noStore = { "cache-control": "no-store" };
+  if (request.method === "GET") {
+    const raw = await env.LISTS.get(key);
+    const map = raw ? JSON.parse(raw) : {};
+    const devices = Object.keys(map).map((id) => ({ id, ...map[id] }));
+    return json({ devices }, 200, noStore);
+  }
+  if (request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!DEV_ID_RE.test(id)) return json({ error: "bad_id" }, 400);
+    const raw = await env.LISTS.get(key);
+    const map = raw ? JSON.parse(raw) : {};
+    const isAdmin = !!env.ADMIN_KEY && request.headers.get("x-admin-key") === env.ADMIN_KEY;
+    if (isAdmin) {
+      if (!map[id]) return json({ error: "not_found" }, 404);
+      map[id].blocking = body.blocking !== false;
+    } else {
+      // نبض دوري من جهاز Tozy: يسجّل نفسه ويحدّث آخر ظهور، بدون ما يلمس حالة الحجب
+      const name = typeof body.name === "string" ? body.name.trim().slice(0, 40) : "جهاز";
+      const existing = map[id];
+      map[id] = { name, blocking: existing ? existing.blocking : true, lastSeen: Date.now() };
+    }
+    await env.LISTS.put(key, JSON.stringify(map));
+    return json({ ok: true, blocking: map[id]?.blocking !== false }, 200, noStore);
+  }
+  return json({ error: "method" }, 405);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/blocklist") return handleBlocklist(request, env, url);
     if (url.pathname === "/usage") return handleUsage(request, env, url);
+    if (url.pathname === "/devices") return handleDevices(request, env, url);
     if (url.pathname === "/searchlog") return handleSearchLog(request, env, url);
     if (url.pathname === "/activity") return handleActivity(request, env, url);
     if (request.method !== "GET") return json({ error: "method" }, 405);

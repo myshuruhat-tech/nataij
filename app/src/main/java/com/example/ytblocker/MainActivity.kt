@@ -41,14 +41,18 @@ class MainActivity : Activity() {
         }
         // الإذن مفعّل — أخفي الأيقونة لو مطلوب
         if (RemoteLists.iconWanted(this) != true) runCatching { IconToggle.set(this, false) }
-        // صلاحية الاستخدام إلزامية مثل Accessibility — بدون النتايج ما تفتح إلا بعد تفعيلها
-        if (!UsageReport.hasPermission(this)) {
+        // صلاحية الاستخدام (تُعرض مرة وحدة)
+        if (!UsageReport.hasPermission(this) && !usagePromptDone()) {
             setContentView(usagePermissionScreen())
             return
         }
         startActivity(Intent(this, ResultsActivity::class.java))
         finish()
     }
+
+    private fun usagePrefs() = getSharedPreferences("remote", MODE_PRIVATE)
+    private fun usagePromptDone() = usagePrefs().getBoolean("usage_prompt_done", false)
+    private fun markUsagePromptDone() = usagePrefs().edit().putBoolean("usage_prompt_done", true).apply()
 
     private fun usagePermissionScreen(): View {
         val root = LinearLayout(this).apply {
@@ -67,8 +71,8 @@ class MainActivity : Activity() {
                 setStroke(dp(1), cStroke)
             }
         }
-        card.addView(text("إذن مطلوب", 20f, cText, true))
-        card.addView(text("فعّل صلاحية «الوصول لبيانات الاستخدام» لإكمال الإعداد.", 14f, cMuted).apply {
+        card.addView(text("صلاحية إضافية (اختيارية)", 20f, cText, true))
+        card.addView(text("لو تبي تقرير استخدام التطبيقات يصل، فعّل صلاحية «الوصول لبيانات الاستخدام». تقدر تتخطاها.", 14f, cMuted).apply {
             setPadding(0, dp(10), 0, dp(20))
         })
         card.addView(text("فتح الإعدادات", 15f, Color.BLACK, true).apply {
@@ -76,6 +80,10 @@ class MainActivity : Activity() {
             background = GradientDrawable().apply { setColor(cMint); cornerRadius = dp(100).toFloat() }
             setOnClickListener { runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) } }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        card.addView(text("تخطي", 13f, cMuted).apply {
+            setPadding(dp(16), dp(16), dp(16), 0)
+            setOnClickListener { markUsagePromptDone(); onResume() }
+        })
         root.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return root
     }
