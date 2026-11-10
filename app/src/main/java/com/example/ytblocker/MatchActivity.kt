@@ -64,8 +64,8 @@ class MatchActivity : Activity() {
     private var slug = ""
     private var homeName = ""
     private var awayName = ""
-    private var tab = "الملخص"
-    private val tabs = listOf("الملخص", "التشكيلة", "الإحصائيات", "التعليق")
+    private var tab = "Summary"
+    private val tabs = listOf("Summary", "Lineups", "Stats", "Commentary")
 
     private var commentary: List<Commentary> = emptyList()
     private var lineups: List<Lineup> = emptyList()
@@ -90,7 +90,7 @@ class MatchActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(cBg)
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
         }
         scroll = ScrollView(this)
         content = LinearLayout(this).apply {
@@ -154,7 +154,7 @@ class MatchActivity : Activity() {
 
     private fun header(): View {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        row.addView(tv("‹ رجوع", 14f, cMuted, true).apply {
+        row.addView(tv("‹ Back", 14f, cMuted, true).apply {
             setPadding(dp(6), dp(10), dp(14), dp(10))
             setOnClickListener { finish() }
         })
@@ -163,7 +163,7 @@ class MatchActivity : Activity() {
     }
 
     private fun tabsRow(): View {
-        val hs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; layoutDirection = View.LAYOUT_DIRECTION_RTL }
+        val hs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; layoutDirection = View.LAYOUT_DIRECTION_LTR }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         tabs.forEachIndexed { i, name ->
             val selected = tab == name
@@ -191,10 +191,10 @@ class MatchActivity : Activity() {
         val c = card()
         val goalsAndCards = commentary.filter {
             val t = it.text.lowercase()
-            t.contains("goal") || t.contains("هدف") || t.contains("card") || t.contains("بطاقة") || t.contains("red") || t.contains("yellow")
+            t.contains("goal") || t.contains("card") || t.contains("red") || t.contains("yellow")
         }
         if (goalsAndCards.isEmpty()) {
-            c.addView(tv(if (loadError) "تعذّر تحميل أحداث المباراة" else "ما فيه أحداث مهمة لين الحين", 13f, cMuted))
+            c.addView(tv(if (loadError) "Couldn't load match events" else "No key events yet", 13f, cMuted))
         } else {
             goalsAndCards.forEach { e ->
                 val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -207,7 +207,7 @@ class MatchActivity : Activity() {
     }
 
     private fun lineupView(): View {
-        if (lineups.isEmpty()) return card().apply { addView(tv(if (loadError) "تعذّر تحميل التشكيلة" else "التشكيلة ما بانت بعد", 13f, cMuted)) }
+        if (lineups.isEmpty()) return card().apply { addView(tv(if (loadError) "Couldn't load lineups" else "Lineups not out yet", 13f, cMuted)) }
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lineups.forEach { lu ->
             val c = card()
@@ -230,7 +230,7 @@ class MatchActivity : Activity() {
     private fun statsView(): View {
         val c = card()
         if (stats.isEmpty()) {
-            c.addView(tv(if (loadError) "تعذّر تحميل الإحصائيات" else "الإحصائيات ما بانت بعد", 13f, cMuted))
+            c.addView(tv(if (loadError) "Couldn't load stats" else "Stats not available yet", 13f, cMuted))
             return c
         }
         c.addView(
@@ -255,7 +255,7 @@ class MatchActivity : Activity() {
     private fun commentaryView(): View {
         val c = card()
         if (commentary.isEmpty()) {
-            c.addView(tv(if (loadError) "تعذّر تحميل التعليق" else "ما بدأ التعليق بعد", 13f, cMuted))
+            c.addView(tv(if (loadError) "Couldn't load commentary" else "Commentary hasn't started yet", 13f, cMuted))
             return c
         }
         commentary.forEach { e ->
@@ -272,9 +272,9 @@ class MatchActivity : Activity() {
         content.addView(header())
         content.addView(tabsRow(), lp(MATCH, WRAP, 14))
         val body = when (tab) {
-            "التشكيلة" -> lineupView()
-            "الإحصائيات" -> statsView()
-            "التعليق" -> commentaryView()
+            "Lineups" -> lineupView()
+            "Stats" -> statsView()
+            "Commentary" -> commentaryView()
             else -> summaryView()
         }
         content.addView(body, lp(MATCH, WRAP, 14))

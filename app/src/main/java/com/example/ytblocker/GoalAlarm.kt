@@ -94,7 +94,7 @@ object GoalAlarm {
     private fun checkGoal(ctx: Context, sp: android.content.SharedPreferences, edit: android.content.SharedPreferences.Editor, team: String, score: Int, opp: String, oppScore: Int) {
         val key = "last_$team"
         val last = sp.getInt(key, -1)
-        if (last in 0 until score) notify(ctx, "هدف لـ $team!", "$team $score - $oppScore $opp")
+        if (last in 0 until score) notify(ctx, "GOAL for $team!", "$team $score - $oppScore $opp")
         edit.putInt(key, score)
     }
 

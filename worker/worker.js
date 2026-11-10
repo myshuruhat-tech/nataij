@@ -12,6 +12,9 @@ const LEAGUES = {
   "ita.1": 135,          // إيطالي
   "ger.1": 78,           // ألماني
   "fra.1": 61,           // فرنسي
+  "fifa.world": 100,          // كأس العالم
+  "fifa.worldq.uefa": 101,     // تصفيات كأس العالم - أوروبا
+  "conmebol.america": 102,     // كوبا أمريكا
 };
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/soccer";

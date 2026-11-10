@@ -53,13 +53,16 @@ class ResultsActivity : Activity() {
     )
 
     private val leagues = listOf(
-        League("307", "الدوري السعودي"),
-        League("2", "دوري أبطال أوروبا"),
-        League("39", "الدوري الإنجليزي"),
-        League("140", "الدوري الإسباني"),
-        League("135", "الدوري الإيطالي"),
-        League("78", "الدوري الألماني"),
-        League("61", "الدوري الفرنسي")
+        League("307", "Saudi Pro League"),
+        League("2", "UEFA Champions League"),
+        League("39", "Premier League"),
+        League("140", "LaLiga"),
+        League("135", "Serie A"),
+        League("78", "Bundesliga"),
+        League("61", "Ligue 1"),
+        League("100", "World Cup"),
+        League("101", "World Cup Qualifiers (UEFA)"),
+        League("102", "Copa América")
     )
 
     // ألوان
@@ -98,7 +101,7 @@ class ResultsActivity : Activity() {
         scroll = ScrollView(this).apply {
             setBackgroundColor(cBg)
             isVerticalScrollBarEnabled = false
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
         }
         content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -174,10 +177,7 @@ class ResultsActivity : Activity() {
         "bayern" to "بايرن ميونخ", "inter" to "إنتر ميلان"
     )
 
-    private fun ar(name: String): String {
-        val key = name.lowercase(Locale.US).filter { it in 'a'..'z' }
-        return arNames.firstOrNull { key.contains(it.first) }?.second ?: name
-    }
+    private fun ar(name: String): String = name // English UI now: ESPN's own team name is used as-is
 
     // ───────── التحميل ─────────
     private fun dateParam(): String {
@@ -186,7 +186,7 @@ class ResultsActivity : Activity() {
         return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(c.time)
     }
 
-    private var errorSub = "تأكد من الإنترنت ثم أعد المحاولة."
+    private var errorSub = "Check your internet, then try again."
 
     private fun load(silent: Boolean) {
         handler.removeCallbacks(tick)
@@ -200,13 +200,13 @@ class ResultsActivity : Activity() {
         val tz = java.net.URLEncoder.encode(TimeZone.getDefault().id, "UTF-8")
         pool.execute {
             var grouped: Map<String, List<Match>>? = null
-            var sub = "تأكد من الإنترنت ثم أعد المحاولة."
+            var sub = "Check your internet, then try again."
             try {
                 grouped = parse(httpGet("$WORKER_URL/fixtures?date=$date&tz=$tz"))
             } catch (e: ApiError) {
                 sub = when (e.code) {
-                    "plan_date" -> "هذا اليوم غير متاح في الخطة المجانية."
-                    "quota" -> "انتهى الحد اليومي للطلبات. جرّب لاحقًا."
+                    "plan_date" -> "This day isn't available on the free plan."
+                    "quota" -> "Daily request limit reached. Try again later."
                     else -> sub
                 }
             } catch (e: Exception) {
@@ -260,17 +260,17 @@ class ResultsActivity : Activity() {
             val t = m.optLong("ts")
             val elapsed = if (m.isNull("elapsed")) "" else "${m.optInt("elapsed")}'"
             val status = when (short) {
-                "CANC" -> "ملغاة"
-                "ABD" -> "متوقفة"
-                "SUSP", "INT" -> "متوقفة مؤقتًا"
-                "HT" -> "استراحة"
-                "BT" -> "استراحة الوقت الإضافي"
-                "P" -> "● ركلات الترجيح"
-                "AET" -> "انتهت (وقت إضافي)"
-                "PEN" -> "انتهت (ركلات ترجيح)"
+                "CANC" -> "Cancelled"
+                "ABD" -> "Abandoned"
+                "SUSP", "INT" -> "Suspended"
+                "HT" -> "Half-time"
+                "BT" -> "Break (ET)"
+                "P" -> "● Penalties"
+                "AET" -> "FT (AET)"
+                "PEN" -> "FT (Pens)"
                 else -> when (state) {
-                    "in" -> "● مباشر  $elapsed"
-                    "post" -> "انتهت"
+                    "in" -> "● LIVE  $elapsed"
+                    "post" -> "FT"
                     else -> SimpleDateFormat("HH:mm", Locale.US).format(Date(t))
                 }
             }
@@ -297,12 +297,12 @@ class ResultsActivity : Activity() {
         content.addView(leagueChips(), lp(MATCH, WRAP, 10))
 
         when {
-            loading -> content.addView(message("جاري تحميل المباريات…", null), lp(MATCH, WRAP, 18))
-            failedAll -> content.addView(message("تعذّر تحميل النتائج", errorSub), lp(MATCH, WRAP, 18))
+            loading -> content.addView(message("Loading matches…", null), lp(MATCH, WRAP, 18))
+            failedAll -> content.addView(message("Couldn't load results", errorSub), lp(MATCH, WRAP, 18))
             else -> addMatches()
         }
         content.addView(
-            tv("البيانات من ESPN وقد تتأخر لحظات عن البث المباشر.", 11f, alpha(cMuted, 170)).apply { gravity = Gravity.CENTER },
+            tv("Data from ESPN and may lag a few moments behind the live broadcast.", 11f, alpha(cMuted, 170)).apply { gravity = Gravity.CENTER },
             lp(MATCH, WRAP, 28)
         )
         scroll.post { scroll.scrollTo(0, y) }
@@ -327,18 +327,18 @@ class ResultsActivity : Activity() {
         row.addView(logoBox, LinearLayout.LayoutParams(dp(54), dp(54)))
 
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(tv("نتايج", 26f, cText, true))
-        val today = SimpleDateFormat("EEEE d MMMM", Locale("ar")).format(Date())
+        col.addView(tv("Results", 26f, cText, true))
+        val today = SimpleDateFormat("EEEE, d MMMM", Locale.ENGLISH).format(Date())
         col.addView(tv(today, 13f, cMuted).apply { setPadding(0, dp(2), 0, 0) })
         row.addView(col, LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginStart = dp(14) })
 
-        row.addView(pill("تحديث", cMint).apply { setOnClickListener { load(silent = false) } })
+        row.addView(pill("Refresh", cMint).apply { setOnClickListener { load(silent = false) } })
         return row
     }
 
     private fun dayChips(): View {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf(-1 to "أمس", 0 to "اليوم", 1 to "غدًا", 2 to "بعد غد").forEachIndexed { i, (off, name) ->
+        listOf(-1 to "Yesterday", 0 to "Today", 1 to "Tomorrow", 2 to "Day after").forEachIndexed { i, (off, name) ->
             val sel = dayOffset == off
             val chip = tv(name, 13f, if (sel) Color.BLACK else cMuted, true).apply {
                 gravity = Gravity.CENTER
@@ -354,12 +354,12 @@ class ResultsActivity : Activity() {
     private fun leagueChips(): View {
         val hs = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val all = listOf<String?>(null) + leagues.map { it.slug }
         all.forEachIndexed { i, slug ->
-            val name = if (slug == null) "كل الدوريات" else leagues.first { it.slug == slug }.name
+            val name = if (slug == null) "All Leagues" else leagues.first { it.slug == slug }.name
             val sel = leagueFilter == slug
             val chip = tv(name, 12f, if (sel) Color.BLACK else cMuted, true).apply {
                 gravity = Gravity.CENTER
@@ -384,7 +384,7 @@ class ResultsActivity : Activity() {
         if (sub != null) box.addView(tv(sub, 13f, cMuted).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
         if (failedAll) {
             box.addView(
-                pill("إعادة المحاولة", cMint).apply { setOnClickListener { load(silent = false) } },
+                pill("Retry", cMint).apply { setOnClickListener { load(silent = false) } },
                 lp(WRAP, WRAP, 14)
             )
         }
@@ -407,19 +407,21 @@ class ResultsActivity : Activity() {
             content.addView(head, lp(MATCH, WRAP, 22))
             list.forEach { content.addView(matchCard(it), lp(MATCH, WRAP, 8)) }
         }
-        if (!any) content.addView(message("لا توجد مباريات", "لا يوجد مباريات في هذا اليوم للدوريات المختارة."), lp(MATCH, WRAP, 18))
+        if (!any) content.addView(message("No matches", "No matches today for the selected leagues."), lp(MATCH, WRAP, 18))
     }
 
+    // صف مضغوط أفقي بأسلوب FotMob: فريق — شعار — وقت/نتيجة — شعار — فريق
     private fun matchCard(m: Match): View {
         val statusColor = when (m.state) {
             "in" -> cLive
             "post" -> cMuted
             else -> cBlue
         }
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(14))
-            background = bg(cCard, 18f, if (m.state == "in") alpha(cLive, 110) else cStroke)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = bg(cCard, 14f, if (m.state == "in") alpha(cLive, 110) else cStroke)
             isClickable = m.id.isNotBlank() && m.slug.isNotBlank()
             if (isClickable) setOnClickListener {
                 val i = android.content.Intent(this@ResultsActivity, MatchActivity::class.java)
@@ -431,61 +433,58 @@ class ResultsActivity : Activity() {
                 startActivity(i)
             }
         }
-        card.addView(pill(m.statusText, statusColor, 11f), LinearLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.CENTER_HORIZONTAL })
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(team(m.homeName, m.homeLogo), LinearLayout.LayoutParams(0, WRAP, 1f))
-
-        val center = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
-        if (m.state == "pre") {
-            center.addView(tv("VS", 14f, cMuted, true))
-        } else {
-            center.addView(tv(m.homeScore, 26f, cText, true))
-            center.addView(tv("-", 20f, cMuted).apply { setPadding(dp(8), 0, dp(8), 0) })
-            center.addView(tv(m.awayScore, 26f, cText, true))
-        }
-        row.addView(center, LinearLayout.LayoutParams(dp(96), WRAP))
-        row.addView(team(m.awayName, m.awayLogo), LinearLayout.LayoutParams(0, WRAP, 1f))
-        card.addView(row, lp(MATCH, WRAP, 12))
-        return card
-    }
-
-    private fun team(name: String, logo: String?): View {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-        val iv = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
-        col.addView(iv, LinearLayout.LayoutParams(dp(40), dp(40)))
-        if (logo != null) loadLogo(logo, iv)
-        col.addView(
-            tv(name, 13f, cText, true).apply {
-                gravity = Gravity.CENTER
-                maxLines = 2
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            },
-            lp(MATCH, WRAP, 6)
+        row.addView(crest(m.homeLogo), LinearLayout.LayoutParams(dp(26), dp(26)))
+        row.addView(
+            tv(m.homeName, 13.5f, cText, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
+            LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginStart = dp(8) }
         )
-        if (name.isNotBlank() && name != "—") {
-            val star = tv(if (GoalAlarm.isFollowed(this, name)) "★" else "☆", 16f, if (GoalAlarm.isFollowed(this, name)) cMint else cMuted)
-            star.gravity = Gravity.CENTER
-            star.isClickable = true
-            star.setPadding(dp(8), dp(4), dp(8), dp(4))
-            star.setOnClickListener {
-                val nowFollowing = GoalAlarm.toggleFollow(this, name)
-                star.text = if (nowFollowing) "★" else "☆"
-                star.setTextColor(if (nowFollowing) cMint else cMuted)
-            }
-            col.addView(star, lp(WRAP, WRAP, 4).apply { gravity = Gravity.CENTER_HORIZONTAL })
+
+        val center = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
+        if (m.state == "pre") {
+            center.addView(tv(m.statusText, 13f, statusColor, true))
+        } else {
+            center.addView(
+                LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(tv(m.homeScore, 15f, cText, true))
+                    addView(tv("-", 13f, cMuted).apply { setPadding(dp(5), 0, dp(5), 0) })
+                    addView(tv(m.awayScore, 15f, cText, true))
+                }
+            )
+            center.addView(tv(m.statusText, 10.5f, statusColor, true).apply { setPadding(0, dp(2), 0, 0) })
         }
-        return col
+        row.addView(center, LinearLayout.LayoutParams(dp(74), WRAP).apply { marginStart = dp(6); marginEnd = dp(6) })
+
+        row.addView(
+            tv(m.awayName, 13.5f, cText, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; gravity = Gravity.END },
+            LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginEnd = dp(8) }
+        )
+        row.addView(crest(m.awayLogo), LinearLayout.LayoutParams(dp(26), dp(26)))
+
+        if (m.homeName.isNotBlank() && m.homeName != "—") row.addView(followStar(m.homeName), LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = dp(6) })
+        return row
     }
+
+    private fun crest(logo: String?): View {
+        val iv = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+        if (logo != null) loadLogo(logo, iv)
+        return iv
+    }
+
+    private fun followStar(team: String): View {
+        val followed = GoalAlarm.isFollowed(this, team)
+        return tv(if (followed) "★" else "☆", 15f, if (followed) cMint else cMuted).apply {
+            isClickable = true
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            setOnClickListener {
+                val now = GoalAlarm.toggleFollow(this@ResultsActivity, team)
+                text = if (now) "★" else "☆"
+                setTextColor(if (now) cMint else cMuted)
+            }
+        }
+    }
+
 
     private fun loadLogo(url: String, iv: ImageView) {
         logoCache[url]?.let { iv.setImageBitmap(it); return }
