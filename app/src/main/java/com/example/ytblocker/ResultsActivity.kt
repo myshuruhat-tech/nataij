@@ -72,9 +72,9 @@ class ResultsActivity : Activity() {
     private val cStroke = Color.parseColor("#2A2A32")
     private val cText = Color.parseColor("#F4F4F6")
     private val cMuted = Color.parseColor("#9A9AA6")
-    private val cMint = Color.parseColor("#34D399")
-    private val cBlue = Color.parseColor("#60A5FA")
-    private val cLive = Color.parseColor("#F87171")
+    private val cMint = Color.parseColor("#FFFFFF")
+    private val cBlue = Color.parseColor("#C7C7CF")
+    private val cLive = Color.parseColor("#FFFFFF")
 
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -157,24 +157,24 @@ class ResultsActivity : Activity() {
 
     // ───────── أسماء الفرق بالعربي ─────────
     private val arNames = listOf(
-        "alhilal" to "الهلال", "alnassr" to "النصر", "alittihad" to "الاتحاد", "alahli" to "الأهلي",
-        "alshabab" to "الشباب", "alettifaq" to "الاتفاق", "alfateh" to "الفتح", "altaawoun" to "التعاون",
-        "alfayha" to "الفيحاء", "alraed" to "الرائد", "damac" to "ضمك", "alkhaleej" to "الخليج",
-        "alriyadh" to "الرياض", "alokhdood" to "الأخدود", "alqadsiah" to "القادسية", "alkholood" to "الخلود",
-        "neom" to "نيوم", "alhazem" to "الحزم", "alwehda" to "الوحدة", "alorobah" to "العروبة",
-        "realmadrid" to "ريال مدريد", "barcelona" to "برشلونة", "atleticomadrid" to "أتلتيكو مدريد",
-        "sevilla" to "إشبيلية", "valencia" to "فالنسيا", "realsociedad" to "ريال سوسيداد",
-        "villarreal" to "فياريال", "athleticclub" to "أتلتيك بلباو",
-        "manchestercity" to "مانشستر سيتي", "manchesterunited" to "مانشستر يونايتد",
-        "liverpool" to "ليفربول", "arsenal" to "أرسنال", "chelsea" to "تشيلسي",
-        "tottenham" to "توتنهام", "newcastle" to "نيوكاسل", "astonvilla" to "أستون فيلا",
-        "bayernmunich" to "بايرن ميونخ", "borussiadortmund" to "دورتموند",
-        "bayerleverkusen" to "ليفركوزن", "rbleipzig" to "لايبزيغ",
-        "juventus" to "يوفنتوس", "intermilan" to "إنتر ميلان", "internazionale" to "إنتر ميلان",
-        "acmilan" to "ميلان", "napoli" to "نابولي", "roma" to "روما", "lazio" to "لاتسيو", "atalanta" to "أتالانتا",
-        "parissaintgermain" to "باريس سان جيرمان", "psg" to "باريس سان جيرمان",
-        "marseille" to "مرسيليا", "monaco" to "موناكو", "lyon" to "ليون",
-        "bayern" to "بايرن ميونخ", "inter" to "إنتر ميلان"
+        "alhilal" to "Al-Hilal", "alnassr" to "Al-Nassr", "alittihad" to "Al-Ittihad", "alahli" to "Al-Ahli",
+        "alshabab" to "Al-Shabab", "alettifaq" to "Al-Ettifaq", "alfateh" to "Al-Fateh", "altaawoun" to "Al-Taawoun",
+        "alfayha" to "Al-Fayha", "alraed" to "Al-Raed", "damac" to "Damac", "alkhaleej" to "Al-Khaleej",
+        "alriyadh" to "Al-Riyadh", "alokhdood" to "Al-Okhdood", "alqadsiah" to "Al-Qadsiah", "alkholood" to "Al-Kholood",
+        "neom" to "Neom", "alhazem" to "Al-Hazem", "alwehda" to "Al-Wehda", "alorobah" to "Al-Orobah",
+        "realmadrid" to "Real Madrid", "barcelona" to "Barcelona", "atleticomadrid" to "Atletico Madrid",
+        "sevilla" to "Sevilla", "valencia" to "Valencia", "realsociedad" to "Real Sociedad",
+        "villarreal" to "Villarreal", "athleticclub" to "Athletic Bilbao",
+        "manchestercity" to "Manchester City", "manchesterunited" to "Manchester United",
+        "liverpool" to "Liverpool", "arsenal" to "Arsenal", "chelsea" to "Chelsea",
+        "tottenham" to "Tottenham", "newcastle" to "Newcastle", "astonvilla" to "Aston Villa",
+        "bayernmunich" to "Bayern Munich", "borussiadortmund" to "Dortmund",
+        "bayerleverkusen" to "Leverkusen", "rbleipzig" to "RB Leipzig",
+        "juventus" to "Juventus", "intermilan" to "Inter Milan", "internazionale" to "Inter Milan",
+        "acmilan" to "AC Milan", "napoli" to "Napoli", "roma" to "Roma", "lazio" to "Lazio", "atalanta" to "Atalanta",
+        "parissaintgermain" to "Paris Saint-Germain", "psg" to "Paris Saint-Germain",
+        "marseille" to "Marseille", "monaco" to "Monaco", "lyon" to "Lyon",
+        "bayern" to "Bayern Munich", "inter" to "Inter Milan"
     )
 
     private fun ar(name: String): String = name // English UI now: ESPN's own team name is used as-is
@@ -340,9 +340,10 @@ class ResultsActivity : Activity() {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf(-1 to "Yesterday", 0 to "Today", 1 to "Tomorrow", 2 to "Day after").forEachIndexed { i, (off, name) ->
             val sel = dayOffset == off
-            val chip = tv(name, 13f, if (sel) Color.BLACK else cMuted, true).apply {
+            val chip = tv(name, 11.5f, if (sel) Color.BLACK else cMuted, true).apply {
                 gravity = Gravity.CENTER
-                setPadding(dp(8), dp(9), dp(8), dp(9))
+                setPadding(dp(4), dp(9), dp(4), dp(9))
+                setSingleLine(true)
                 background = if (sel) bg(cMint, 100f) else bg(cCardAlt, 100f, cStroke)
                 setOnClickListener { dayOffset = off; load(silent = false) }
             }

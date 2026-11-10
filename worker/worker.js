@@ -86,13 +86,30 @@ function normalize(ev, lid) {
   };
 }
 
-async function fetchLeague(slug, from, to) {
-  const r = await fetch(`${ESPN}/${slug}/scoreboard?dates=${from}-${to}&limit=300`, {
-    headers: { "user-agent": "Mozilla/5.0", accept: "application/json" },
+// ESPN ما عاد يقبل رنج تاريخين (dates=من-الى) — يرجّع 400. نطلب كل يوم لحاله ونجمعهم.
+async function fetchLeagueDay(slug, day) {
+  const r = await fetch(`${ESPN}/${slug}/scoreboard?dates=${day}&limit=300`, {
+    headers: {
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+      accept: "application/json",
+      referer: "https://www.espn.com/",
+      origin: "https://www.espn.com",
+    },
   });
-  if (!r.ok) throw new Error(`http ${r.status}`);
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    console.error(`fetchLeagueDay ${slug} ${day} failed: http ${r.status} ${body.slice(0, 200)}`);
+    throw new Error(`http ${r.status}`);
+  }
   const data = await r.json();
   return (data.events || []).map((ev) => normalize(ev, LEAGUES[slug]));
+}
+
+async function fetchLeague(slug, days) {
+  const results = await Promise.allSettled(days.map((d) => fetchLeagueDay(slug, d)));
+  const ok = results.filter((r) => r.status === "fulfilled");
+  if (!ok.length) throw new Error("all_days_failed");
+  return ok.flatMap((r) => r.value);
 }
 
 // ───────── مزامنة قوائم الحجب بين تطبيق الأم وتطبيق Tozy ─────────
@@ -321,6 +338,45 @@ async function handleMatch(url) {
   return res;
 }
 
+// ───────── الأجهزة: كل جهاز Tozy يسجّل نفسه، والأم تتحكم بحجب كل جهاز لحاله ─────────
+// POST /devices?pair=CODE  body:{id,name}            -> تسجيل/نبض دوري (أي جهاز، بدون مفتاح)
+// POST /devices?pair=CODE  body:{id,blocking} + key   -> تغيير حالة الحجب لجهاز معيّن (الأم فقط)
+// GET  /devices?pair=CODE                             -> قائمة الأجهزة
+const DEV_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+async function handleDevices(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const key = `devices:${pair}`;
+  const noStore = { "cache-control": "no-store" };
+  if (request.method === "GET") {
+    const raw = await env.LISTS.get(key);
+    const map = raw ? JSON.parse(raw) : {};
+    const devices = Object.keys(map).map((id) => ({ id, ...map[id] }));
+    return json({ devices }, 200, noStore);
+  }
+  if (request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!DEV_ID_RE.test(id)) return json({ error: "bad_id" }, 400);
+    const raw = await env.LISTS.get(key);
+    const map = raw ? JSON.parse(raw) : {};
+    const isAdmin = !!env.ADMIN_KEY && request.headers.get("x-admin-key") === env.ADMIN_KEY;
+    if (isAdmin) {
+      if (!map[id]) return json({ error: "not_found" }, 404);
+      map[id].blocking = body.blocking !== false;
+    } else {
+      const name = typeof body.name === "string" ? body.name.trim().slice(0, 40) : "جهاز";
+      const existing = map[id];
+      map[id] = { name, blocking: existing ? existing.blocking : true, lastSeen: Date.now() };
+    }
+    await env.LISTS.put(key, JSON.stringify(map));
+    return json({ ok: true, blocking: map[id]?.blocking !== false }, 200, noStore);
+  }
+  return json({ error: "method" }, 405);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -329,6 +385,7 @@ export default {
     if (url.pathname === "/searchlog") return handleSearchLog(request, env, url);
     if (url.pathname === "/activity") return handleActivity(request, env, url);
     if (url.pathname === "/match") return handleMatch(url);
+    if (url.pathname === "/devices") return handleDevices(request, env, url);
     if (request.method !== "GET") return json({ error: "method" }, 405);
     if (url.pathname !== "/fixtures") return json({ ok: true, service: "nataij" });
 
@@ -352,12 +409,15 @@ export default {
     const hit = await cache.match(freshKey);
     if (hit) return hit;
 
-    // ESPN يقسّم الأيام بتوقيت أمريكا، فنجلب يوم قبل ويوم بعد ثم نفلتر بتاريخ منطقة المستخدم
+    // ESPN يقسّم الأيام بتوقيت أمريكا، فنجلب يوم قبل ويوم اليوم ويوم بعد (كل وحد لحاله) ثم نفلتر بتاريخ منطقة المستخدم
     const base = new Date(`${date}T12:00:00Z`);
-    const from = ymd(new Date(base.getTime() - 86400000));
-    const to = ymd(new Date(base.getTime() + 86400000));
+    const days = [
+      ymd(new Date(base.getTime() - 86400000)),
+      ymd(base),
+      ymd(new Date(base.getTime() + 86400000)),
+    ];
 
-    const results = await Promise.allSettled(Object.keys(LEAGUES).map((s) => fetchLeague(s, from, to)));
+    const results = await Promise.allSettled(Object.keys(LEAGUES).map((s) => fetchLeague(s, days)));
     const failed = results.filter((r) => r.status === "rejected").length;
 
     if (failed === results.length) {

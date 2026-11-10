@@ -62,7 +62,7 @@ object GoalAlarm {
         if (Build.VERSION.SDK_INT >= 26) {
             val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-                nm.createNotificationChannel(NotificationChannel(CHANNEL_ID, "أهداف الفرق المتابَعة", NotificationManager.IMPORTANCE_HIGH))
+                nm.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Followed team goals", NotificationManager.IMPORTANCE_HIGH))
             }
         }
     }

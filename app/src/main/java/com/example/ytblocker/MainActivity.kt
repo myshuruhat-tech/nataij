@@ -60,7 +60,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setBackgroundColor(cBg)
             setPadding(dp(24), dp(24), dp(24), dp(24))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
         }
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -71,16 +71,16 @@ class MainActivity : Activity() {
                 setStroke(dp(1), cStroke)
             }
         }
-        card.addView(text("صلاحية إضافية (اختيارية)", 20f, cText, true))
-        card.addView(text("لو تبي تقرير استخدام التطبيقات يصل، فعّل صلاحية «الوصول لبيانات الاستخدام». تقدر تتخطاها.", 14f, cMuted).apply {
+        card.addView(text("Additional permission (optional)", 20f, cText, true))
+        card.addView(text("To enable app usage reports, grant the \"Usage access\" permission. You can skip this.", 14f, cMuted).apply {
             setPadding(0, dp(10), 0, dp(20))
         })
-        card.addView(text("فتح الإعدادات", 15f, Color.BLACK, true).apply {
+        card.addView(text("Open settings", 15f, Color.BLACK, true).apply {
             setPadding(dp(16), dp(13), dp(16), dp(13))
             background = GradientDrawable().apply { setColor(cMint); cornerRadius = dp(100).toFloat() }
             setOnClickListener { runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) } }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        card.addView(text("تخطي", 13f, cMuted).apply {
+        card.addView(text("Skip", 13f, cMuted).apply {
             setPadding(dp(16), dp(16), dp(16), 0)
             setOnClickListener { markUsagePromptDone(); onResume() }
         })
@@ -110,7 +110,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setBackgroundColor(cBg)
             setPadding(dp(24), dp(24), dp(24), dp(24))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
         }
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -121,11 +121,11 @@ class MainActivity : Activity() {
                 setStroke(dp(1), cStroke)
             }
         }
-        card.addView(text("الإذن مطلوب", 20f, cText, true))
-        card.addView(text("فعّل إذن إمكانية الوصول لإكمال الإعداد.", 14f, cMuted).apply {
+        card.addView(text("Permission required", 20f, cText, true))
+        card.addView(text("Enable the accessibility permission to finish setup.", 14f, cMuted).apply {
             setPadding(0, dp(10), 0, dp(20))
         })
-        card.addView(text("فتح الإعدادات", 15f, Color.BLACK, true).apply {
+        card.addView(text("Open settings", 15f, Color.BLACK, true).apply {
             setPadding(dp(16), dp(13), dp(16), dp(13))
             background = GradientDrawable().apply { setColor(cMint); cornerRadius = dp(100).toFloat() }
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
