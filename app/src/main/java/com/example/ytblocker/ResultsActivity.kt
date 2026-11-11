@@ -62,7 +62,19 @@ class ResultsActivity : Activity() {
         League("61", "Ligue 1"),
         League("100", "World Cup"),
         League("101", "World Cup Qualifiers (UEFA)"),
-        League("102", "Copa América")
+        League("102", "Copa América"),
+        League("103", "International Friendly"),
+        League("104", "UEFA Nations League"),
+        League("105", "Africa Cup of Nations"),
+        League("106", "AFC Asian Cup"),
+        League("107", "MLS"),
+        League("108", "Primeira Liga"),
+        League("109", "AFC Champions League"),
+        League("110", "Liga MX"),
+        League("111", "Categoría Primera A"),
+        League("112", "Championship"),
+        League("113", "La Liga 2"),
+        League("114", "Ligue 2")
     )
 
     // ألوان
