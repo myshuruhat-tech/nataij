@@ -123,10 +123,15 @@ async function handleBlocklist(request, env, url) {
   const pair = url.searchParams.get("pair") || "";
   if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
   if (!env.LISTS) return json({ error: "no_kv" }, 500);
-  const key = `pair:${pair}`;
+  const dev = url.searchParams.get("device") || "";
+  if (dev && !/^[A-Za-z0-9_-]{6,64}$/.test(dev)) return json({ error: "bad_device" }, 400);
+  const globalKey = `pair:${pair}`;
+  const key = dev ? `pair:${pair}:dev:${dev}` : globalKey;
   const noStore = { "cache-control": "no-store" };
   if (request.method === "GET") {
-    const raw = await env.LISTS.get(key);
+    // قوائم هذا الجهاز أول، وإذا ما انحفظ له شي نرجع للقوائم العامة القديمة
+    let raw = await env.LISTS.get(key);
+    if (!raw && dev) raw = await env.LISTS.get(globalKey);
     if (!raw) return json({ empty: true }, 200, noStore);
     return new Response(raw, { headers: { "content-type": "application/json; charset=utf-8", ...noStore } });
   }
@@ -175,7 +180,9 @@ async function handleUsage(request, env, url) {
   const pair = url.searchParams.get("pair") || "";
   if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
   if (!env.LISTS) return json({ error: "no_kv" }, 500);
-  const key = `usage:${pair}`;
+  const udev = url.searchParams.get("device") || "";
+  if (udev && !/^[A-Za-z0-9_-]{6,64}$/.test(udev)) return json({ error: "bad_device" }, 400);
+  const key = udev ? `usage:${pair}:dev:${udev}` : `usage:${pair}`;
   const noStore = { "cache-control": "no-store" };
   if (request.method === "GET") {
     const raw = await env.LISTS.get(key);

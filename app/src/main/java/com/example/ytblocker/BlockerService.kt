@@ -21,6 +21,10 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -107,10 +111,48 @@ class BlockerService : AccessibilityService() {
         exact = r.exact.map { norm(it) }.toSet()
         shortWords = toShort(exact)
         remoteBlocking = r.blocking
-        remoteFullBlockApps = safe(r.fullBlockApps.map { it.lowercase() }.toSet())
-        remoteScanApps = safe(r.scanApps.map { it.lowercase() }.toSet())
-        remoteSearchApps = safe(r.searchApps.map { it.lowercase() }.toSet())
+        rawFull = r.fullBlockApps; rawScan = r.scanApps; rawSearch = r.searchApps
+        reresolve()
         remoteWarning = r.warningMessage
+    }
+
+    // أمي تكتب اسم التطبيق بس (مثل: سناب)؛ هنا نحوّله لمعرّف الحزمة من التطبيقات المثبتة على هذا الجهاز
+    private var rawFull: List<String> = emptyList()
+    private var rawScan: List<String> = emptyList()
+    private var rawSearch: List<String> = emptyList()
+    private var labelCache: Map<String, String> = emptyMap()
+    private var labelAt = 0L
+
+    private fun labels(): Map<String, String> {
+        val now = System.currentTimeMillis()
+        if (now - labelAt > 300_000 || labelCache.isEmpty()) {
+            labelAt = now
+            labelCache = runCatching {
+                packageManager.getInstalledApplications(0)
+                    .associate { norm(packageManager.getApplicationLabel(it).toString()) to it.packageName }
+            }.getOrDefault(emptyMap())
+        }
+        return labelCache
+    }
+
+    private fun resolveApps(raw: List<String>): Set<String> {
+        val out = mutableSetOf<String>()
+        val lab = labels()
+        for (r in raw) {
+            val t = r.trim()
+            if (t.contains(".") && !t.contains(" ")) { out += t.lowercase(); continue } // معرّف حزمة جاهز
+            val n = norm(t)
+            if (n.isEmpty()) continue
+            val hit = lab[n] ?: if (n.length >= 3) lab.entries.firstOrNull { it.key.contains(n) }?.value else null
+            if (hit != null) out += hit.lowercase()
+        }
+        return out
+    }
+
+    private fun reresolve() {
+        remoteFullBlockApps = safe(resolveApps(rawFull))
+        remoteScanApps = safe(resolveApps(rawScan))
+        remoteSearchApps = safe(resolveApps(rawSearch))
     }
 
     private fun maybePull(force: Boolean = false) {
@@ -166,12 +208,22 @@ class BlockerService : AccessibilityService() {
         // تطبيقات ممنوعة بالكامل: يرجّع للشاشة الرئيسية أول ما تنفتح
         if (pkg != null && DeviceSync.isBlockingOnThisDevice() && pkg in blockedApps()) {
             val now = System.currentTimeMillis()
-            if (now - lastAppBlock > 900) {
-                lastAppBlock = now
-                // رجوع أول (يقفل صفحة كيك)، بعدها الشاشة الرئيسية عشان يطلع من التطبيق كلياً
-                showWarningIfSet()
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_HOME) }, 150)
+            val activePkg = rootInActiveWindow?.packageName?.toString()
+            if (activePkg == pkg) {
+                // التطبيق فعلاً قدام الشاشة
+                if (warnView == null && now - lastAppBlock > 900) {
+                    lastAppBlock = now
+                    // كرت التحذير أول، وبعد ما يضغط أي زر: رجوع ثم الشاشة الرئيسية عشان يطلع من التطبيق كلياً
+                    showWarningCard {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_HOME) }, 150)
+                    }
+                }
+            } else if (now - lastFloatClose > 2500) {
+                // التطبيق مو قدام الشاشة (نافذة عائمة / صورة داخل صورة): لا نرسل رجوع/رئيسية
+                // لأنها ما تقفلها وتخلي الجهاز يرجع للصفحة الأولى بلا توقف. نحاول نقفل النافذة نفسها.
+                lastFloatClose = now
+                closeBlockedFloating(pkg)
             }
             return
         }
@@ -185,6 +237,125 @@ class BlockerService : AccessibilityService() {
         if (pkg != YT && covers.isEmpty() && genericCovers.isEmpty()) return
         // throttle بدل debounce: التحديث يصير حتى لو يوتيوب يرسل أحداث بلا توقف
         if (!pending) { pending = true; handler.postDelayed(refresh, 80) }
+    }
+
+    // ───────── كرت التحذير الأحمر: "هل تريد المشاهدة؟" (نعم / لا، وكلاهما يطلعه) ─────────
+    private var warnView: View? = null
+    private var warnTimeout: Runnable? = null
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun clearWarnCard() {
+        warnTimeout?.let { handler.removeCallbacks(it) }
+        warnTimeout = null
+        warnView?.let { v -> runCatching { wm.removeView(v) } }
+        warnView = null
+    }
+
+    private fun showWarningCard(onDone: () -> Unit) {
+        if (warnView != null) return
+        val msg = remoteWarning.ifBlank { "هذا المحتوى غير مسموح" }
+        val red = Color.rgb(220, 38, 38)
+
+        fun finish() {
+            if (warnView == null) return
+            clearWarnCard()
+            onDone()
+        }
+
+        fun btn(label: String) = TextView(this).apply {
+            text = label
+            setTextColor(red)
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, dp(14))
+            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(14).toFloat() }
+            setOnClickListener { finish() }
+        }
+
+        fun label(t: String, size: Float, bold: Boolean = false) = TextView(this).apply {
+            text = t
+            textSize = size
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            if (bold) typeface = Typeface.DEFAULT_BOLD
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val lp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(6), 0, dp(6), 0) } }
+            addView(btn("نعم"), lp())
+            addView(btn("لا"), lp())
+        }
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(22), dp(26), dp(22), dp(22))
+            background = GradientDrawable().apply { setColor(red); cornerRadius = dp(24).toFloat() }
+            addView(label("⚠️", 52f))
+            addView(label("تنبيه", 22f, true).apply { setPadding(0, dp(6), 0, dp(6)) })
+            addView(label(msg, 17f).apply { setPadding(0, dp(4), 0, dp(18)) })
+            addView(label("هل تريد المشاهدة؟", 19f, true).apply { setPadding(0, 0, 0, dp(14)) })
+            addView(row)
+        }
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(200, 0, 0, 0))
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            isClickable = true // يمنع اللمس من النفاذ للتطبيق اللي تحته
+            addView(card, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
+                setMargins(dp(28), 0, dp(28), 0)
+            })
+        }
+
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+        val added = runCatching { wm.addView(root, lp) }.isSuccess
+        if (!added) { onDone(); return }
+        warnView = root
+        // احتياط: لو ما ضغط شي يطلع تلقائياً بعد 12 ثانية
+        val t = Runnable { finish() }
+        warnTimeout = t
+        handler.postDelayed(t, 12_000)
+    }
+
+    // ───────── قفل نافذة عائمة / PiP لتطبيق ممنوع ─────────
+    private var lastFloatClose = 0L
+    private fun findCloseNode(n: AccessibilityNodeInfo?, depth: Int = 0): AccessibilityNodeInfo? {
+        if (n == null || depth > 8) return null
+        val re = Regex("close|dismiss|cancel|إغلاق|اغلاق|إلغاء", RegexOption.IGNORE_CASE)
+        val txt = (n.contentDescription?.toString() ?: "") + " " + (n.text?.toString() ?: "") + " " + (n.viewIdResourceName ?: "")
+        val t = (n.text?.toString() ?: "").trim()
+        if (re.containsMatchIn(txt) || t == "×" || t == "✕" || t.equals("x", true)) return n
+        for (i in 0 until n.childCount) {
+            val f = findCloseNode(n.getChild(i), depth + 1)
+            if (f != null) return f
+        }
+        return null
+    }
+
+    private fun closeBlockedFloating(pkg: String) {
+        val w = (try { windows.firstOrNull { !it.isActive && it.root?.packageName?.toString() == pkg } } catch (e: Exception) { null }) ?: return
+        val b = Rect(); w.getBoundsInScreen(b)
+        if (w.root?.performAction(AccessibilityNodeInfo.ACTION_DISMISS) == true) return
+        // لمسة بالنص تظهر أزرار التحكم، بعدها ندوّر على زر الإغلاق
+        tapAt(b.exactCenterX(), b.exactCenterY())
+        handler.postDelayed({
+            val r2 = try { windows.firstOrNull { it.root?.packageName?.toString() == pkg }?.root } catch (e: Exception) { null }
+            val close = findCloseNode(r2)
+            if (close != null && clickNode(close)) return@postDelayed
+            // احتياطي: زاوية النافذة العلوية اليمنى (مكان زر X المعتاد)
+            val d = resources.displayMetrics.density
+            tapAt(b.right - 14 * d, b.top + 14 * d)
+        }, 450)
     }
 
     // ───────── فحص عام لتطبيقات scanApps: يغطي أي نص مطابق بدون منطق يوتيوب التفصيلي ─────────
@@ -346,15 +517,19 @@ class BlockerService : AccessibilityService() {
 
         if (pageLevel || watchHit || openedBlockedVideo) {
             val now = System.currentTimeMillis()
+            if (warnView != null) { clearCovers(); return } // الكرت ظاهر الحين
             if (now - lastBack > 3000) {
                 lastBack = now
                 val bl = backLabel ?: "-"
                 addActivity("حجب", bl, channel = bl)
-                showWarningIfSet()
                 // لو كان في مشغّل مصغّر قبل الرجوع (فيديو ثاني يشتغل) ما نلمسه
                 val hadMini = findNode(root, closeWords, true) != null
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                if (!hadMini && (watchHit || openedBlockedVideo)) stopMiniPlayer()
+                val stopMini = !hadMini && (watchHit || openedBlockedVideo)
+                // كرت التحذير: الخيارين (نعم / لا) يطلعونه من الفيديو
+                showWarningCard {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    if (stopMini) stopMiniPlayer()
+                }
             }
             clearCovers()
             return
@@ -871,6 +1046,7 @@ class BlockerService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        clearWarnCard()
         clearCovers()
         clearGenericCovers()
         handler.removeCallbacks(usagePush)
@@ -882,11 +1058,13 @@ class BlockerService : AccessibilityService() {
     private val syncLoop = object : Runnable {
         override fun run() {
             maybePull(); DeviceSync.maybeHeartbeat(this@BlockerService)
+            reresolve() // لو تثبّت تطبيق جديد مكتوب اسمه بالقوائم
             handler.postDelayed(this, 3 * 60_000)
         }
     }
 
     override fun onInterrupt() {
+        clearWarnCard()
         clearCovers()
         clearGenericCovers()
     }

@@ -6,5 +6,5 @@
   "observability": { "enabled": true },
   // تخزين قوائم الحجب (يُنشأ تلقائياً عند النشر؛ لو اشتكى، أنشئ KV يدوياً وحط "id" هنا)
   "kv_namespaces": [{ "binding": "LISTS" }]
-  // ما يحتاج أي مفتاح أو Secret (يستخدم ESPN غير الرسمي)
+  // مهم: لازم Secret اسمه ADMIN_KEY (من لوحة Cloudflare) عشان تطبيق الأم يقدر يحدّث القوائم
 }

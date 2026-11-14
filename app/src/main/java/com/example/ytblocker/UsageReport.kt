@@ -60,7 +60,7 @@ object UsageReport {
                 }
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val body = JSONObject().put("date", date).put("apps", arr)
-                val c = URL("${RemoteLists.URL_BASE}/usage?pair=${RemoteLists.PAIR}").openConnection() as HttpURLConnection
+                val c = URL("${RemoteLists.URL_BASE}/usage?pair=${RemoteLists.PAIR}&device=${DeviceSync.deviceId(ctx)}").openConnection() as HttpURLConnection
                 c.requestMethod = "POST"
                 c.connectTimeout = 8000; c.readTimeout = 8000
                 c.doOutput = true
