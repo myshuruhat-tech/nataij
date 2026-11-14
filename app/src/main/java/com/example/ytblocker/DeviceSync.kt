@@ -22,7 +22,7 @@ object DeviceSync {
         return id
     }
 
-    private fun deviceName(): String {
+    fun deviceName(): String {
         val model = Build.MODEL ?: "جهاز"
         return if (model.length in 1..40) model else "جهاز Tozy"
     }

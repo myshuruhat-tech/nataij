@@ -225,19 +225,21 @@ async function handleSearchLog(request, env, url) {
     const q = cleanQuery(body.q);
     const app = typeof body.app === "string" ? body.app.trim().slice(0, 120) : "";
     const label = typeof body.label === "string" && body.label.trim() ? body.label.trim().slice(0, 80) : app;
+    const device = typeof body.device === "string" ? body.device.trim().slice(0, 64) : "";
+    const deviceName = typeof body.deviceName === "string" && body.deviceName.trim() ? body.deviceName.trim().slice(0, 40) : "";
     if (!q || !app) return json({ error: "bad_entry" }, 400); // ما نخزّن إدخال فاضي
     const raw = await env.LISTS.get(key);
     let store = { entries: [] };
     if (raw) {
       try { store = JSON.parse(raw); if (!Array.isArray(store.entries)) store.entries = []; } catch (e) { store = { entries: [] }; }
     }
-    // تفادي تكرار نفس البحث لو انرفع مرتين قريب من بعض (نفس التطبيق ونفس الكلمة خلال آخر دقيقتين)
+    // تفادي تكرار نفس البحث لو انرفع مرتين قريب من بعض (نفس الجهاز ونفس التطبيق ونفس الكلمة خلال آخر دقيقتين)
     const now = Date.now();
     const dup = store.entries[0];
-    if (dup && dup.app === app && dup.q === q && now - Date.parse(dup.ts) < 120000) {
+    if (dup && dup.app === app && dup.q === q && dup.device === device && now - Date.parse(dup.ts) < 120000) {
       return json({ ok: true, deduped: true }, 200, noStore);
     }
-    store.entries.unshift({ ts: new Date().toISOString(), app, label, q });
+    store.entries.unshift({ ts: new Date().toISOString(), app, label, q, device, deviceName });
     store.entries = store.entries.slice(0, MAX_SEARCH_ENTRIES);
     await env.LISTS.put(key, JSON.stringify(store));
     return json({ ok: true }, 200, noStore);
@@ -268,13 +270,15 @@ async function handleActivity(request, env, url) {
     const kind = clean(body.kind, 10);
     const channel = clean(body.channel, 120);
     const label = clean(body.label, 200);
+    const device = clean(body.device, 64);
+    const deviceName = clean(body.deviceName, 40);
     if (!type || !label) return json({ error: "bad_entry" }, 400);
     const raw = await env.LISTS.get(key);
     let store = { entries: [] };
     if (raw) {
       try { store = JSON.parse(raw); if (!Array.isArray(store.entries)) store.entries = []; } catch (e) { store = { entries: [] }; }
     }
-    store.entries.unshift({ ts: new Date().toISOString(), type, kind, channel, label });
+    store.entries.unshift({ ts: new Date().toISOString(), type, kind, channel, label, device, deviceName });
     store.entries = store.entries.slice(0, MAX_ACTIVITY_ENTRIES);
     await env.LISTS.put(key, JSON.stringify(store));
     return json({ ok: true }, 200, noStore);

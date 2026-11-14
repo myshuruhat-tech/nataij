@@ -39,8 +39,6 @@ class MainActivity : Activity() {
             setContentView(permissionScreen())
             return
         }
-        // الإذن مفعّل — أخفي الأيقونة لو مطلوب
-        if (RemoteLists.iconWanted(this) != true) runCatching { IconToggle.set(this, false) }
         // صلاحية الاستخدام (تُعرض مرة وحدة)
         if (!UsageReport.hasPermission(this) && !usagePromptDone()) {
             setContentView(usagePermissionScreen())

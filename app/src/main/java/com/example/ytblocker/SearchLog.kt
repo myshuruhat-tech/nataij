@@ -82,6 +82,7 @@ object SearchLog {
         Thread {
             try {
                 val body = JSONObject().put("app", app).put("label", label(ctx, app)).put("q", q)
+                    .put("device", DeviceSync.deviceId(ctx)).put("deviceName", DeviceSync.deviceName())
                 val c = URL("${RemoteLists.URL_BASE}/searchlog?pair=${RemoteLists.PAIR}").openConnection() as HttpURLConnection
                 c.requestMethod = "POST"
                 c.connectTimeout = 8000; c.readTimeout = 8000

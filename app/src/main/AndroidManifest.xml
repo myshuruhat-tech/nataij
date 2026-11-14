@@ -34,17 +34,6 @@
             </intent-filter>
         </activity-alias>
 
-        <receiver
-            android:name=".SecretReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.provider.Telephony.SECRET_CODE" />
-                <data
-                    android:host="8669"
-                    android:scheme="android_secret_code" />
-            </intent-filter>
-        </receiver>
-
         <activity android:name=".ResultsActivity" android:exported="false" />
         <activity android:name=".MatchActivity" android:exported="false" />
 

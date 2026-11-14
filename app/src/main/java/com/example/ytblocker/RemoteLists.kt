@@ -19,9 +19,6 @@ object RemoteLists {
 
     private fun p(ctx: Context) = ctx.getSharedPreferences("remote", Context.MODE_PRIVATE)
 
-    // true = الأم تبي الأيقونة ظاهرة، false = مخفية، null = ما حددت
-    fun iconWanted(ctx: Context): Boolean? = when (p(ctx).getInt("icon", -1)) { 1 -> true; 0 -> false; else -> null }
-
     fun load(ctx: Context): Data? {
         val raw = p(ctx).getString("data", null) ?: return null
         return try {
@@ -41,11 +38,6 @@ object RemoteLists {
                 val txt = c.inputStream.bufferedReader().use { it.readText() }
                 val o = JSONObject(txt)
                 if (o.optBoolean("empty", false)) return@Thread // ما أرسلت الأم شي بعد: نكمل بالقوائم الثابتة
-                if (o.has("icon")) {
-                    val vis = o.optBoolean("icon", false)
-                    p(ctx).edit().putInt("icon", if (vis) 1 else 0).apply()
-                    runCatching { IconToggle.set(ctx, vis) }
-                }
                 if (txt == p(ctx).getString("data", null)) return@Thread
                 p(ctx).edit().putString("data", txt).apply()
                 onChanged()

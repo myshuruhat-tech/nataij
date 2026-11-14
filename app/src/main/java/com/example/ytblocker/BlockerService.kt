@@ -15,7 +15,6 @@ import android.os.Handler
 import android.widget.Toast
 import android.os.Looper
 import android.view.Display
-import android.view.KeyEvent
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -79,6 +78,23 @@ class BlockerService : AccessibilityService() {
     private var remoteSearchApps: Set<String> = emptySet()
     private var lastPull = 0L
 
+    // حماية: هذي الحزم ما تنحجب أو تُفحص أبداً حتى لو وصلت من قوائم الأم بالغلط
+    // (لو انحجبت الحزمة الرئيسية للجهاز "launcher/home" الجهاز يرجع للصفحة الأولى
+    // باستمرار ولا يقدر الولد يستخدم جواله، وهذا اللي صار)
+    private val neverTouch = setOf(
+        "com.android.launcher", "com.android.launcher2", "com.android.launcher3",
+        "com.google.android.apps.nexuslauncher", "com.sec.android.app.launcher",
+        "com.miui.home", "com.mi.android.globallauncher", "com.huawei.android.launcher",
+        "com.oppo.launcher", "com.coloros.launcher", "com.vivo.launcher",
+        "com.bbk.launcher2", "net.oneplus.launcher", "com.oneplus.launcher",
+        "com.transsion.XOSLauncher", "com.sonyericsson.home", "com.lge.launcher2",
+        "com.lge.launcher3", "com.motorola.launcher3", "com.asus.launcher",
+        "com.android.systemui", "com.android.settings", "com.android.phone",
+        "com.android.dialer", "com.google.android.dialer", "com.android.contacts",
+        "com.android.documentsui", packageName
+    )
+    private fun safe(pkgs: Set<String>) = pkgs.filterNot { p -> p in neverTouch || p.contains("launcher", true) || p.endsWith(".home") }.toSet()
+
     private fun applyLists() {
         val r = RemoteLists.load(this)
         if (r == null) {
@@ -91,9 +107,9 @@ class BlockerService : AccessibilityService() {
         exact = r.exact.map { norm(it) }.toSet()
         shortWords = toShort(exact)
         remoteBlocking = r.blocking
-        remoteFullBlockApps = r.fullBlockApps.map { it.lowercase() }.toSet()
-        remoteScanApps = r.scanApps.map { it.lowercase() }.toSet()
-        remoteSearchApps = r.searchApps.map { it.lowercase() }.toSet()
+        remoteFullBlockApps = safe(r.fullBlockApps.map { it.lowercase() }.toSet())
+        remoteScanApps = safe(r.scanApps.map { it.lowercase() }.toSet())
+        remoteSearchApps = safe(r.searchApps.map { it.lowercase() }.toSet())
         remoteWarning = r.warningMessage
     }
 
@@ -140,7 +156,9 @@ class BlockerService : AccessibilityService() {
         evCount++
         if (pkg != packageName) lastPkg = pkg ?: ""
         if (pkg == packageName) return // أحداث الغطاء نفسه
-        if (pkg == YT) { maybePull(); DeviceSync.maybeHeartbeat(this) }
+        // تحديث القوائم والنبض على أي حدث (مو بس يوتيوب)، وإلا سجل البحث بكروم/غيره
+        // ما يشتغل أبداً إلى أن يفتح الولد يوتيوب أول مرة
+        maybePull(); DeviceSync.maybeHeartbeat(this)
         // سجل البحث: نفحص فقط لو التطبيق ضمن قائمة أمي للبحث، وفقط أحداث تغيّر النص
         if (pkg != null && e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pkg in remoteSearchApps) {
             e.source?.let { SearchLog.onFocusedTextChanged(this, pkg, it, remoteSearchApps) }
@@ -745,6 +763,7 @@ class BlockerService : AccessibilityService() {
         Thread {
             try {
                 val body = org.json.JSONObject().put("type", type).put("kind", k).put("channel", ch).put("label", label)
+                    .put("device", DeviceSync.deviceId(this)).put("deviceName", DeviceSync.deviceName())
                 val c = java.net.URL("${RemoteLists.URL_BASE}/activity?pair=${RemoteLists.PAIR}").openConnection() as java.net.HttpURLConnection
                 c.requestMethod = "POST"
                 c.connectTimeout = 8000; c.readTimeout = 8000
@@ -842,49 +861,29 @@ class BlockerService : AccessibilityService() {
         covers.clear()
     }
 
-    // أول ما يتفعّل إذن إمكانية الوصول: تختفي الأيقونة
     override fun onServiceConnected() {
         super.onServiceConnected()
         applyLists()
         DeviceSync.maybeHeartbeat(this, force = true)
         maybePull(true)
-        runCatching { IconToggle.set(this, false) }
         handler.post(usagePush)
+        handler.post(syncLoop)
     }
 
-    // فتح التطبيق وهو مخفي: صوت-، صوت-، صوت+، صوت+، صوت- خلال 4 ثواني
-    private val keySeq = ArrayDeque<Pair<Int, Long>>()
-    private val openPattern = listOf(
-        KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_DOWN,
-        KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_UP,
-        KeyEvent.KEYCODE_VOLUME_DOWN
-    )
-
-    override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return false
-        val code = event.keyCode
-        if (code != KeyEvent.KEYCODE_VOLUME_UP && code != KeyEvent.KEYCODE_VOLUME_DOWN) return false
-        val now = System.currentTimeMillis()
-        keySeq.addLast(code to now)
-        while (keySeq.size > openPattern.size) keySeq.removeFirst()
-        while (keySeq.isNotEmpty() && now - keySeq.first().second > 4000) keySeq.removeFirst()
-        if (keySeq.map { it.first } == openPattern) {
-            keySeq.clear()
-            runCatching { IconToggle.set(this, true) }
-            runCatching {
-                startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
-        }
-        return false // الصوت يشتغل عادي
-    }
-
-    // لو الإذن انطفى: ترجع الأيقونة عشان ما ينقفل عليك التطبيق
     override fun onUnbind(intent: Intent?): Boolean {
-        runCatching { IconToggle.set(this, true) }
         clearCovers()
         clearGenericCovers()
         handler.removeCallbacks(usagePush)
+        handler.removeCallbacks(syncLoop)
         return super.onUnbind(intent)
+    }
+
+    // تحديث دوري للقوائم والنبض حتى لو الجهاز ساكن على نفس الشاشة بدون أحداث جديدة
+    private val syncLoop = object : Runnable {
+        override fun run() {
+            maybePull(); DeviceSync.maybeHeartbeat(this@BlockerService)
+            handler.postDelayed(this, 3 * 60_000)
+        }
     }
 
     override fun onInterrupt() {
