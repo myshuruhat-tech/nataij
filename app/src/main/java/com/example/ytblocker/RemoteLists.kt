@@ -14,7 +14,7 @@ object RemoteLists {
     class Data(
         val handles: List<String>, val names: List<String>, val exact: List<String>, val blocking: Boolean,
         val fullBlockApps: List<String> = emptyList(), val scanApps: List<String> = emptyList(),
-        val searchApps: List<String> = emptyList()
+        val searchApps: List<String> = emptyList(), val warningMessage: String = ""
     )
 
     private fun p(ctx: Context) = ctx.getSharedPreferences("remote", Context.MODE_PRIVATE)
@@ -27,7 +27,7 @@ object RemoteLists {
         return try {
             val o = JSONObject(raw)
             fun l(k: String): List<String> { val a = o.optJSONArray(k) ?: return emptyList(); return (0 until a.length()).map { a.getString(it) } }
-            Data(l("handles"), l("names"), l("exact"), o.optBoolean("blocking", true), l("fullBlockApps"), l("scanApps"), l("searchApps"))
+            Data(l("handles"), l("names"), l("exact"), o.optBoolean("blocking", true), l("fullBlockApps"), l("scanApps"), l("searchApps"), o.optString("warningMessage", ""))
         } catch (e: Exception) { null }
     }
 

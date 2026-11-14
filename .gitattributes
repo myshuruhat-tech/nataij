@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.keystore binary -text -diff
+*.jks binary -text -diff
+*.png binary -text -diff
+*.jpg binary -text -diff
+*.webp binary -text -diff

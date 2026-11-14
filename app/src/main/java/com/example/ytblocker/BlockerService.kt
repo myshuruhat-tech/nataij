@@ -12,6 +12,7 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Handler
+import android.widget.Toast
 import android.os.Looper
 import android.view.Display
 import android.view.KeyEvent
@@ -82,7 +83,7 @@ class BlockerService : AccessibilityService() {
         val r = RemoteLists.load(this)
         if (r == null) {
             handles = defHandles; names = defNames; exact = defExact; shortWords = defShort; remoteBlocking = true
-            remoteFullBlockApps = emptySet(); remoteScanApps = emptySet(); remoteSearchApps = emptySet()
+            remoteFullBlockApps = emptySet(); remoteScanApps = emptySet(); remoteSearchApps = emptySet(); remoteWarning = ""
             return
         }
         handles = r.handles.map { norm(it) }
@@ -93,6 +94,7 @@ class BlockerService : AccessibilityService() {
         remoteFullBlockApps = r.fullBlockApps.map { it.lowercase() }.toSet()
         remoteScanApps = r.scanApps.map { it.lowercase() }.toSet()
         remoteSearchApps = r.searchApps.map { it.lowercase() }.toSet()
+        remoteWarning = r.warningMessage
     }
 
     private fun maybePull(force: Boolean = false) {
@@ -123,6 +125,12 @@ class BlockerService : AccessibilityService() {
     // تطبيقات يُفحص محتواها بنفس قوائم القنوات/الأسماء أعلاه (يوتيوب له مساره المفصّل، هذا للباقي)
     private fun scanApps() = remoteScanApps - YT
     private var lastAppBlock = 0L
+    private var remoteWarning: String = ""
+    private fun showWarningIfSet() {
+        val msg = remoteWarning
+        if (msg.isBlank()) return
+        handler.post { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+    }
 
     private var evCount = 0
     private var lastPkg = ""
@@ -143,6 +151,7 @@ class BlockerService : AccessibilityService() {
             if (now - lastAppBlock > 900) {
                 lastAppBlock = now
                 // رجوع أول (يقفل صفحة كيك)، بعدها الشاشة الرئيسية عشان يطلع من التطبيق كلياً
+                showWarningIfSet()
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_HOME) }, 150)
             }
@@ -323,6 +332,7 @@ class BlockerService : AccessibilityService() {
                 lastBack = now
                 val bl = backLabel ?: "-"
                 addActivity("حجب", bl, channel = bl)
+                showWarningIfSet()
                 // لو كان في مشغّل مصغّر قبل الرجوع (فيديو ثاني يشتغل) ما نلمسه
                 val hadMini = findNode(root, closeWords, true) != null
                 performGlobalAction(GLOBAL_ACTION_BACK)

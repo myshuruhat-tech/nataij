@@ -143,6 +143,7 @@ async function handleBlocklist(request, env, url) {
       fullBlockApps: cleanList(body.fullBlockApps).map((s) => s.toLowerCase()),
       scanApps: cleanList(body.scanApps).map((s) => s.toLowerCase()),
       searchApps: cleanList(body.searchApps).map((s) => s.toLowerCase()),
+      warningMessage: typeof body.warningMessage === "string" ? body.warningMessage.trim().slice(0, 300) : "",
       v: Date.now(),
     };
     if (typeof body.icon === "boolean") data.icon = body.icon; // إظهار/إخفاء أيقونة Tozy
