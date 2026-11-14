@@ -81,7 +81,7 @@ class BlockerService : AccessibilityService() {
     // حماية: هذي الحزم ما تنحجب أو تُفحص أبداً حتى لو وصلت من قوائم الأم بالغلط
     // (لو انحجبت الحزمة الرئيسية للجهاز "launcher/home" الجهاز يرجع للصفحة الأولى
     // باستمرار ولا يقدر الولد يستخدم جواله، وهذا اللي صار)
-    private val neverTouch = setOf(
+    private val neverTouch by lazy { setOf(
         "com.android.launcher", "com.android.launcher2", "com.android.launcher3",
         "com.google.android.apps.nexuslauncher", "com.sec.android.app.launcher",
         "com.miui.home", "com.mi.android.globallauncher", "com.huawei.android.launcher",
@@ -92,7 +92,7 @@ class BlockerService : AccessibilityService() {
         "com.android.systemui", "com.android.settings", "com.android.phone",
         "com.android.dialer", "com.google.android.dialer", "com.android.contacts",
         "com.android.documentsui", packageName
-    )
+    ) }
     private fun safe(pkgs: Set<String>) = pkgs.filterNot { p -> p in neverTouch || p.contains("launcher", true) || p.endsWith(".home") }.toSet()
 
     private fun applyLists() {
