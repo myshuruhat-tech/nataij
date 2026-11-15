@@ -1,6 +1,7 @@
 package com.example.ytblocker
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -31,6 +32,25 @@ object DeviceSync {
     @Volatile private var lastBlocking = true
     fun isBlockingOnThisDevice() = lastBlocking
 
+    // قائمة التطبيقات المثبّتة (يلي عنده أيقونة بالمشغّل)، عشان الأم تختار منها بدل ما تكتب
+    private fun installedApps(ctx: Context): org.json.JSONArray {
+        val arr = org.json.JSONArray()
+        try {
+            val pm = ctx.packageManager
+            val i = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+            val list = pm.queryIntentActivities(i, 0)
+            val seen = HashSet<String>()
+            for (ri in list) {
+                val pkg = ri.activityInfo.packageName
+                if (pkg == ctx.packageName || !seen.add(pkg)) continue
+                val label = try { ri.loadLabel(pm).toString() } catch (e: Exception) { pkg }
+                arr.put(JSONObject().put("pkg", pkg).put("label", label))
+                if (arr.length() >= 200) break
+            }
+        } catch (e: Exception) { }
+        return arr
+    }
+
     private var lastBeat = 0L
     fun maybeHeartbeat(ctx0: Context, force: Boolean = false) {
         val ctx = ctx0.applicationContext
@@ -39,7 +59,7 @@ object DeviceSync {
         lastBeat = now
         Thread {
             try {
-                val body = JSONObject().put("id", deviceId(ctx)).put("name", deviceName())
+                val body = JSONObject().put("id", deviceId(ctx)).put("name", deviceName()).put("apps", installedApps(ctx))
                 val c = URL("$URL_BASE/devices?pair=$PAIR").openConnection() as HttpURLConnection
                 c.requestMethod = "POST"
                 c.connectTimeout = 8000; c.readTimeout = 8000
