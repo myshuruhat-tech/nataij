@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <!-- إشعار عند هدف لفريق متابَع -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
         android:allowBackup="true"
@@ -37,6 +39,9 @@
 
         <activity android:name=".ResultsActivity" android:exported="false" />
         <activity android:name=".MatchActivity" android:exported="false" />
+        <activity android:name=".ScreenShareActivity" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <service android:name=".ScreenCaptureService" android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <receiver android:name=".GoalCheckReceiver" android:exported="false" />
 

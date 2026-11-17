@@ -517,6 +517,64 @@ async function handleDevices(request, env, url) {
   return json({ error: "method" }, 405);
 }
 
+// ───────── بث الشاشة: طلب -> بث مباشر -> إطارات ─────────
+// POST   /screen?pair&device        + x-admin-key  -> الأم تطلب البث (TTL دقيقتين)
+// GET    /screen?pair&device                        -> الجهاز يسأل: فيه طلب؟
+// DELETE /screen?pair&device                        -> الجهاز يمسح الطلب بعد القرار
+// POST   /screen/live?pair&device   + x-admin-key  -> الأم تجدد "أنا شايفة" كل ~6 ثواني (TTL 15 ث)
+// GET    /screen/live?pair&device                   -> الجهاز يسأل: لسا فيه مشاهد؟
+// POST   /screen/frame?pair&device                  -> الجهاز يرفع آخر صورة (TTL 20 ث)
+// GET    /screen/frame?pair&device  + x-admin-key  -> الأم تجيب آخر صورة
+async function handleScreen(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  const device = url.searchParams.get("device") || "";
+  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
+  if (!DEV_ID_RE.test(device)) return json({ error: "bad_id" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const noStore = { "cache-control": "no-store" };
+  const isAdmin = !!env.ADMIN_KEY && request.headers.get("x-admin-key") === env.ADMIN_KEY;
+  const sub = url.pathname.slice("/screen".length); // "", "/live", "/frame"
+
+  if (sub === "") {
+    const key = `screen:${pair}:${device}`;
+    if (request.method === "GET") return json({ requested: (await env.LISTS.get(key)) !== null }, 200, noStore);
+    if (request.method === "POST") {
+      if (!isAdmin) return json({ error: "unauthorized" }, 401);
+      await env.LISTS.put(key, String(Date.now()), { expirationTtl: 120 });
+      return json({ ok: true }, 200, noStore);
+    }
+    if (request.method === "DELETE") { await env.LISTS.delete(key); return json({ ok: true }, 200, noStore); }
+  }
+
+  if (sub === "/live") {
+    const key = `live:${pair}:${device}`;
+    if (request.method === "GET") return json({ live: (await env.LISTS.get(key)) !== null }, 200, noStore);
+    if (request.method === "POST") {
+      if (!isAdmin) return json({ error: "unauthorized" }, 401);
+      await env.LISTS.put(key, String(Date.now()), { expirationTtl: 15 });
+      return json({ ok: true }, 200, noStore);
+    }
+  }
+
+  if (sub === "/frame") {
+    const key = `frame:${pair}:${device}`;
+    if (request.method === "POST") {
+      let body; try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
+      const jpg = typeof body.jpg === "string" ? body.jpg : "";
+      if (!jpg || jpg.length > 900000) return json({ error: "bad_frame" }, 400);
+      await env.LISTS.put(key, jpg, { expirationTtl: 20 });
+      return json({ ok: true }, 200, noStore);
+    }
+    if (request.method === "GET") {
+      if (!isAdmin) return json({ error: "unauthorized" }, 401);
+      const jpg = await env.LISTS.get(key);
+      return json({ jpg: jpg || null }, 200, noStore);
+    }
+  }
+
+  return json({ error: "method" }, 405);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -541,6 +599,7 @@ export default {
     if (url.pathname === "/icons") return handleIcons(request, env, url);
     if (url.pathname === "/match") return handleMatch(url);
     if (url.pathname === "/devices") return handleDevices(request, env, url);
+    if (url.pathname === "/screen" || url.pathname.startsWith("/screen/")) return handleScreen(request, env, url);
     if (request.method !== "GET") return json({ error: "method" }, 405);
     if (url.pathname !== "/fixtures") return json({ ok: true, service: "nataij" });
 

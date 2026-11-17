@@ -158,7 +158,7 @@ class BlockerService : AccessibilityService() {
         if (pkg == packageName) return // أحداث الغطاء نفسه
         // تحديث القوائم والنبض على أي حدث (مو بس يوتيوب)، وإلا سجل البحث بكروم/غيره
         // ما يشتغل أبداً إلى أن يفتح الولد يوتيوب أول مرة
-        maybePull(); DeviceSync.maybeHeartbeat(this)
+        maybePull(); DeviceSync.maybeHeartbeat(this); DeviceSync.maybeScreenPoll(this)
         if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) logAppOpen(pkg)
         // سجل البحث: نفحص فقط لو التطبيق ضمن قائمة أمي للبحث، وفقط أحداث تغيّر النص
         if (pkg != null && e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pkg in remoteSearchApps) {
