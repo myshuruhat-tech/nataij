@@ -74,7 +74,15 @@ class ResultsActivity : Activity() {
         League("111", "Categoría Primera A"),
         League("112", "Championship"),
         League("113", "La Liga 2"),
-        League("114", "Ligue 2")
+        League("114", "Ligue 2"),
+        League("115", "EFL Trophy"),
+        League("116", "Uruguayan Primera"),
+        League("117", "UEFA Women's Champions League"),
+        League("118", "Copa Colombia"),
+        League("119", "Salvadoran Primera"),
+        League("120", "SAFF Championship"),
+        League("121", "Liga MX Femenil"),
+        League("122", "Women's League Cup (England)")
     )
 
     // ألوان

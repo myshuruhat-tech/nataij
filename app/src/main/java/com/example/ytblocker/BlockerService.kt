@@ -778,6 +778,7 @@ class BlockerService : AccessibilityService() {
     }
 
     private fun addActivity(type: String, label: String, kind: String = "", channel: String = "") {
+        if (!DeviceSync.isLoggingAllowed()) return
         val k = kind.ifBlank { if (norm(label).startsWith(norm("شورتس"))) "شورت" else "فيديو" }
         val ch = channel.ifBlank { label }
         Thread {

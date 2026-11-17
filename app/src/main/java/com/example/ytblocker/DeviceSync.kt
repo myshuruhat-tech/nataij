@@ -30,6 +30,8 @@ object DeviceSync {
 
     // آخر حالة حجب وصلت لهذا الجهاز بالذات (قبل أول نبض ناجح نفترض الحجب شغال)
     @Volatile private var lastBlocking = true
+    @Volatile private var lastLogging = true
+    fun isLoggingAllowed() = lastLogging
     fun isBlockingOnThisDevice() = lastBlocking
 
     // قائمة التطبيقات المثبّتة (يلي عنده أيقونة بالمشغّل)، عشان الأم تختار منها بدل ما تكتب
@@ -52,6 +54,40 @@ object DeviceSync {
     }
 
     private var lastBeat = 0L
+    // يرفع أيقونات التطبيقات (48px) مرة كل 24 ساعة عشان تظهر عند الأم
+    private fun uploadIconsIfNeeded(ctx: Context) {
+        val sp = ctx.getSharedPreferences("icons_up", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - sp.getLong("ts", 0L) < 24L * 3600 * 1000) return
+        sp.edit().putLong("ts", now).apply()
+        try {
+            val pm = ctx.packageManager
+            val i = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+            val icons = JSONObject()
+            val seen = HashSet<String>()
+            for (ri in pm.queryIntentActivities(i, 0)) {
+                val pkg = ri.activityInfo.packageName
+                if (pkg == ctx.packageName || !seen.add(pkg)) continue
+                try {
+                    val d = ri.loadIcon(pm)
+                    val bmp = android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888)
+                    d.setBounds(0, 0, 48, 48); d.draw(android.graphics.Canvas(bmp))
+                    val bo = java.io.ByteArrayOutputStream()
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo)
+                    icons.put(pkg, android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP))
+                } catch (e: Exception) { }
+                if (icons.length() >= 200) break
+            }
+            val c = URL("$URL_BASE/icons?pair=$PAIR&device=${deviceId(ctx)}").openConnection() as HttpURLConnection
+            c.requestMethod = "POST"
+            c.connectTimeout = 10000; c.readTimeout = 20000
+            c.doOutput = true
+            c.setRequestProperty("content-type", "application/json")
+            c.outputStream.use { it.write(JSONObject().put("icons", icons).toString().toByteArray()) }
+            if (c.responseCode !in 200..299) sp.edit().putLong("ts", 0L).apply()
+        } catch (e: Exception) { sp.edit().putLong("ts", 0L).apply() }
+    }
+
     fun maybeHeartbeat(ctx0: Context, force: Boolean = false) {
         val ctx = ctx0.applicationContext
         val now = System.currentTimeMillis()
@@ -68,7 +104,10 @@ object DeviceSync {
                 c.outputStream.use { it.write(body.toString().toByteArray()) }
                 if (c.responseCode in 200..299) {
                     val txt = c.inputStream.bufferedReader().use { it.readText() }
-                    lastBlocking = JSONObject(txt).optBoolean("blocking", true)
+                    val jo = JSONObject(txt)
+                    lastBlocking = jo.optBoolean("blocking", true)
+                    lastLogging = jo.optBoolean("logging", true)
+                    uploadIconsIfNeeded(ctx)
                 }
             } catch (e: Exception) { }
         }.start()
