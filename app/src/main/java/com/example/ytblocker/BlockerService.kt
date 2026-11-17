@@ -899,11 +899,13 @@ class BlockerService : AccessibilityService() {
         return super.onUnbind(intent)
     }
 
-    // تحديث دوري للقوائم والنبض حتى لو الجهاز ساكن على نفس الشاشة بدون أحداث جديدة
+    // تحديث دوري للقوائم والنبض وطلب مشاهدة الشاشة حتى لو الجهاز ساكن بدون أحداث جديدة
+    // كل دالة عندها حد أدنى داخلي لوقتها (maybePull=3د، maybeHeartbeat=5د، maybeScreenPoll=10ث)
+    // فاستدعاؤها كل 10 ثواني آمن وما يكثر الطلبات، وبنفس الوقت يخلي طلب الشاشة يتلقّط بسرعة
     private val syncLoop = object : Runnable {
         override fun run() {
-            maybePull(); DeviceSync.maybeHeartbeat(this@BlockerService)
-            handler.postDelayed(this, 3 * 60_000)
+            maybePull(); DeviceSync.maybeHeartbeat(this@BlockerService); DeviceSync.maybeScreenPoll(this@BlockerService)
+            handler.postDelayed(this, 10_000)
         }
     }
 
