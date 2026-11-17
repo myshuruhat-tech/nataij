@@ -15,7 +15,29 @@ const LEAGUES = {
   "fifa.world": 100,          // كأس العالم
   "fifa.worldq.uefa": 101,     // تصفيات كأس العالم - أوروبا
   "conmebol.america": 102,     // كوبا أمريكا
+  "fifa.friendly": 103,        // ودية دولية
+  "uefa.nations": 104,         // دوري الأمم الأوروبي
+  "caf.nations": 105,          // كأس الأمم الأفريقية
+  "afc.asian.cup": 106,        // كأس آسيا
+  "usa.1": 107,                // الدوري الأمريكي MLS
+  "por.1": 108,                // الدوري البرتغالي
+  "afc.champions": 109,        // دوري أبطال آسيا
+  "mex.1": 110,                // الدوري المكسيكي
+  "col.1": 111,                // الدوري الكولمبي
+  "eng.2": 112,                // الدرجة الثانية الإنجليزي (تشامبيونشيب)
+  "esp.2": 113,                // الدرجة الثانية الإسباني
+  "fra.2": 114,                // الدرجة الثانية الفرنسي
+  "eng.trophy": 115,           // EFL Trophy الإنجليزي
+  "uru.1": 116,                // الدوري الأوروغواياني
+  "uefa.wchampions": 117,      // أبطال أوروبا للسيدات
+  "col.copa": 118,             // كأس كولومبيا
+  "slv.1": 119,                // دوري السلفادور
+  "afc.saff.championship": 120, // بطولة SAFF
+  "mex.w.1": 121,              // الدوري المكسيكي للسيدات
+  "eng.w.league_cup": 122,     // كأس الرابطة الإنجليزي للسيدات
 };
+// ملاحظة: بما إن العدد صار 30 دوري وبدون ترقية خطة Cloudflare (حد 50 طلب فرعي)،
+// بعض الدوريات ممكن أحيانًا ما ترجع نتيجة إذا الطلبات تجاوزت الحد — هذا قرار مقصود، مو خطأ.
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/soccer";
 const LEAGUE_SLUG_BY_LID = Object.fromEntries(Object.entries(LEAGUES).map(([slug, lid]) => [lid, slug]));
@@ -105,11 +127,69 @@ async function fetchLeagueDay(slug, day) {
   return (data.events || []).map((ev) => normalize(ev, LEAGUES[slug]));
 }
 
-async function fetchLeague(slug, days) {
-  const results = await Promise.allSettled(days.map((d) => fetchLeagueDay(slug, d)));
+// ───────── تخزين مسبق في KV (fx:slug:day): يملأه الكرون بالخلفية، وطلبات /fixtures تقرأ منه بدون أي اتصال بـ ESPN وقت الطلب ─────────
+const FX_TTL = 60 * 60 * 24 * 7; // 7 أيام (الكرون يكتب فقط لما البيانات تتغير، فما نحتاج تجديد دوري)
+const fxKey = (slug, day) => `fx:${slug}:${day}`;
+
+async function fetchLeagueDayCached(env, slug, day, budget) {
+  if (env.LISTS) {
+    const cached = await env.LISTS.get(fxKey(slug, day));
+    if (cached) {
+      try { return JSON.parse(cached); } catch (e) {}
+    }
+  }
+  // ما لقيناها مخزّنة — نجيبها حي كحل احتياطي، بميزانية 40 طلب لكل طلب عشان ما نتجاوز حد الـ 50
+  if (budget) { if (budget.n <= 0) throw new Error("budget"); budget.n--; }
+  const events = await fetchLeagueDay(slug, day);
+  if (env.LISTS) {
+    env.LISTS.put(fxKey(slug, day), JSON.stringify(events), { expirationTtl: FX_TTL }).catch(() => {});
+  }
+  return events;
+}
+
+async function fetchLeague(env, slug, days, budget) {
+  const results = await Promise.allSettled(days.map((d) => fetchLeagueDayCached(env, slug, d, budget)));
   const ok = results.filter((r) => r.status === "fulfilled");
   if (!ok.length) throw new Error("all_days_failed");
   return ok.flatMap((r) => r.value);
+}
+
+// نافذة الأيام (UTC) اللي نحتفظ لها بنسخة محدّثة — تغطي يوم قبل وبعد بالراحة لأي منطقة زمنية
+function precacheDays() {
+  const now = new Date();
+  const base = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const out = [];
+  for (let i = -2; i <= 2; i++) out.push(ymd(new Date(base.getTime() + i * 86400000)));
+  return out;
+}
+
+// يشتغل كل دقيقتين (حسب الـ Cron Trigger اللي تضيفه من لوحة Cloudflare).
+// كل مرة يعبي دفعة صغيرة بس (تحت حد الـ 50 طلب فرعي) ويكمل من وين وقف آخر مرة.
+async function runPrecache(env) {
+  if (!env.LISTS) return;
+  const slugs = Object.keys(LEAGUES);
+  const days = precacheDays();
+  const today = days[2];
+  // كل مرة: كل دوريات اليوم (30 طلب، عشان المباشر يتحدّث كل دقيقتين) + 15 من باقي الأيام بالتناوب = 45 (تحت حد 50)
+  const others = [];
+  for (const d of days) if (d !== today) for (const s of slugs) others.push([s, d]);
+  const jobs = slugs.map((s) => [s, today]);
+  const PER = 15;
+  const start = (Math.floor(Date.now() / 120000) * PER) % others.length;
+  for (let n = 0; n < PER; n++) jobs.push(others[(start + n) % others.length]);
+
+  await Promise.allSettled(
+    jobs.map(async ([slug, day]) => {
+      try {
+        const val = JSON.stringify(await fetchLeagueDay(slug, day));
+        const key = fxKey(slug, day);
+        // نكتب فقط إذا تغيّرت البيانات (حد الكتابة اليومي في KV المجاني 1000)
+        if ((await env.LISTS.get(key)) !== val) await env.LISTS.put(key, val, { expirationTtl: FX_TTL });
+      } catch (e) {
+        console.error(`precache ${slug} ${day} failed: ${e.message}`);
+      }
+    })
+  );
 }
 
 // ───────── مزامنة قوائم الحجب بين تطبيق الأم وتطبيق Tozy ─────────
@@ -143,7 +223,6 @@ async function handleBlocklist(request, env, url) {
       fullBlockApps: cleanList(body.fullBlockApps).map((s) => s.toLowerCase()),
       scanApps: cleanList(body.scanApps).map((s) => s.toLowerCase()),
       searchApps: cleanList(body.searchApps).map((s) => s.toLowerCase()),
-      warningMessage: typeof body.warningMessage === "string" ? body.warningMessage.trim().slice(0, 300) : "",
       v: Date.now(),
     };
     if (typeof body.icon === "boolean") data.icon = body.icon; // إظهار/إخفاء أيقونة Tozy
@@ -225,21 +304,19 @@ async function handleSearchLog(request, env, url) {
     const q = cleanQuery(body.q);
     const app = typeof body.app === "string" ? body.app.trim().slice(0, 120) : "";
     const label = typeof body.label === "string" && body.label.trim() ? body.label.trim().slice(0, 80) : app;
-    const device = typeof body.device === "string" ? body.device.trim().slice(0, 64) : "";
-    const deviceName = typeof body.deviceName === "string" && body.deviceName.trim() ? body.deviceName.trim().slice(0, 40) : "";
     if (!q || !app) return json({ error: "bad_entry" }, 400); // ما نخزّن إدخال فاضي
     const raw = await env.LISTS.get(key);
     let store = { entries: [] };
     if (raw) {
       try { store = JSON.parse(raw); if (!Array.isArray(store.entries)) store.entries = []; } catch (e) { store = { entries: [] }; }
     }
-    // تفادي تكرار نفس البحث لو انرفع مرتين قريب من بعض (نفس الجهاز ونفس التطبيق ونفس الكلمة خلال آخر دقيقتين)
+    // تفادي تكرار نفس البحث لو انرفع مرتين قريب من بعض (نفس التطبيق ونفس الكلمة خلال آخر دقيقتين)
     const now = Date.now();
     const dup = store.entries[0];
-    if (dup && dup.app === app && dup.q === q && dup.device === device && now - Date.parse(dup.ts) < 120000) {
+    if (dup && dup.app === app && dup.q === q && now - Date.parse(dup.ts) < 120000) {
       return json({ ok: true, deduped: true }, 200, noStore);
     }
-    store.entries.unshift({ ts: new Date().toISOString(), app, label, q, device, deviceName });
+    store.entries.unshift({ ts: new Date().toISOString(), app, label, q });
     store.entries = store.entries.slice(0, MAX_SEARCH_ENTRIES);
     await env.LISTS.put(key, JSON.stringify(store));
     return json({ ok: true }, 200, noStore);
@@ -256,11 +333,36 @@ async function handleActivity(request, env, url) {
   const pair = url.searchParams.get("pair") || "";
   if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
   if (!env.LISTS) return json({ error: "no_kv" }, 500);
-  const key = `activity:${pair}`;
   const noStore = { "cache-control": "no-store" };
+  const dayKey = (d) => `actday:${pair}:${d}`;
+  const readEntries = async (k) => {
+    const r = await env.LISTS.get(k);
+    if (!r) return [];
+    try { const o = JSON.parse(r); return Array.isArray(o.entries) ? o.entries : []; } catch (e) { return []; }
+  };
   if (request.method === "GET") {
-    const raw = await env.LISTS.get(key);
-    return new Response(raw || '{"entries":[]}', { headers: { "content-type": "application/json; charset=utf-8", ...noStore } });
+    const q = url.searchParams;
+    if (q.get("days")) {
+      const prefix = `actday:${pair}:`;
+      const days = [];
+      let cursor;
+      do {
+        const r = await env.LISTS.list({ prefix, cursor });
+        r.keys.forEach((k) => days.push(k.name.slice(prefix.length)));
+        cursor = r.list_complete ? undefined : r.cursor;
+      } while (cursor);
+      days.sort().reverse();
+      return json({ days }, 200, noStore);
+    }
+    const d = q.get("day");
+    if (d) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return json({ error: "bad_day" }, 400);
+      return json({ entries: await readEntries(dayKey(d)) }, 200, noStore);
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const yday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const [a, b, legacy] = await Promise.all([readEntries(dayKey(today)), readEntries(dayKey(yday)), readEntries(`activity:${pair}`)]);
+    return json({ entries: [...a, ...b, ...legacy].slice(0, MAX_ACTIVITY_ENTRIES) }, 200, noStore);
   }
   if (request.method === "POST") {
     let body;
@@ -270,18 +372,40 @@ async function handleActivity(request, env, url) {
     const kind = clean(body.kind, 10);
     const channel = clean(body.channel, 120);
     const label = clean(body.label, 200);
-    const device = clean(body.device, 64);
-    const deviceName = clean(body.deviceName, 40);
     if (!type || !label) return json({ error: "bad_entry" }, 400);
-    const raw = await env.LISTS.get(key);
-    let store = { entries: [] };
-    if (raw) {
-      try { store = JSON.parse(raw); if (!Array.isArray(store.entries)) store.entries = []; } catch (e) { store = { entries: [] }; }
-    }
-    store.entries.unshift({ ts: new Date().toISOString(), type, kind, channel, label, device, deviceName });
-    store.entries = store.entries.slice(0, MAX_ACTIVITY_ENTRIES);
-    await env.LISTS.put(key, JSON.stringify(store));
+    const now = new Date();
+    const key = dayKey(now.toISOString().slice(0, 10));
+    const entries = await readEntries(key);
+    entries.unshift({ ts: now.toISOString(), type, kind, channel, label, device: clean(body.device, 64), deviceName: clean(body.deviceName, 40) });
+    await env.LISTS.put(key, JSON.stringify({ entries: entries.slice(0, 20000) })); // بدون انتهاء: يُحفظ للأبد
     return json({ ok: true }, 200, noStore);
+  }
+  return json({ error: "method" }, 405);
+}
+
+// ───────── أيقونات التطبيقات لكل جهاز ─────────
+// POST /icons?pair=CODE&device=ID  body: { icons: { "pkg": "base64png" } }   |   GET نفس الرابط
+async function handleIcons(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  const device = url.searchParams.get("device") || "";
+  if (!PAIR_RE.test(pair) || !/^[\w-]{1,64}$/.test(device)) return json({ error: "bad_params" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const key = `icons:${pair}:${device}`;
+  if (request.method === "GET") {
+    const raw = await env.LISTS.get(key);
+    return new Response(raw || "{}", { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+  }
+  if (request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
+    const cur = JSON.parse((await env.LISTS.get(key)) || "{}");
+    for (const [pkg, b64] of Object.entries(body.icons || {})) {
+      if (/^[\w.]{1,120}$/.test(pkg) && typeof b64 === "string" && b64.length < 20000) cur[pkg] = b64;
+    }
+    const keys = Object.keys(cur);
+    if (keys.length > 400) keys.slice(0, keys.length - 400).forEach((k) => delete cur[k]);
+    await env.LISTS.put(key, JSON.stringify(cur));
+    return json({ ok: true }, 200, { "cache-control": "no-store" });
   }
   return json({ error: "method" }, 405);
 }
@@ -357,7 +481,7 @@ async function handleDevices(request, env, url) {
   if (request.method === "GET") {
     const raw = await env.LISTS.get(key);
     const map = raw ? JSON.parse(raw) : {};
-    const devices = Object.keys(map).map((id) => ({ id, ...map[id] }));
+    const devices = Object.keys(map).map((id) => ({ id, ...map[id], name: map[id].customName || map[id].name }));
     return json({ devices }, 200, noStore);
   }
   if (request.method === "POST") {
@@ -368,22 +492,27 @@ async function handleDevices(request, env, url) {
     const raw = await env.LISTS.get(key);
     const map = raw ? JSON.parse(raw) : {};
     const isAdmin = !!env.ADMIN_KEY && request.headers.get("x-admin-key") === env.ADMIN_KEY;
+    let skipWrite = false;
     if (isAdmin) {
       if (!map[id]) return json({ error: "not_found" }, 404);
-      map[id].blocking = body.blocking !== false;
+      if (body.remove === true) delete map[id];
+      else {
+        if (typeof body.blocking === "boolean") map[id].blocking = body.blocking;
+        if (typeof body.logging === "boolean") map[id].logging = body.logging;
+        if (typeof body.name === "string") map[id].customName = body.name.trim().slice(0, 40);
+      }
     } else {
       const name = typeof body.name === "string" ? body.name.trim().slice(0, 40) : "جهاز";
-      const apps = Array.isArray(body.apps)
-        ? body.apps
-            .filter((a) => a && typeof a.pkg === "string" && typeof a.label === "string")
-            .map((a) => ({ pkg: a.pkg.trim().slice(0, 120), label: a.label.trim().slice(0, 80) }))
-            .slice(0, 200)
-        : [];
       const existing = map[id];
-      map[id] = { name, blocking: existing ? existing.blocking : true, lastSeen: Date.now(), apps };
+      const apps = Array.isArray(body.apps)
+        ? body.apps.slice(0, 400).filter((x) => x && typeof x.pkg === "string").map((x) => ({ pkg: x.pkg.slice(0, 120), label: String(x.label || x.pkg).slice(0, 60) }))
+        : existing?.apps;
+      const same = existing && existing.name === name && JSON.stringify(existing.apps || []) === JSON.stringify(apps || []) && Date.now() - (existing.lastSeen || 0) < 10 * 60 * 1000;
+      if (same) skipWrite = true;
+      else map[id] = { ...existing, name, apps, blocking: existing ? existing.blocking : true, lastSeen: Date.now() };
     }
-    await env.LISTS.put(key, JSON.stringify(map));
-    return json({ ok: true, blocking: map[id]?.blocking !== false }, 200, noStore);
+    if (!skipWrite) await env.LISTS.put(key, JSON.stringify(map));
+    return json({ ok: true, blocking: map[id]?.blocking !== false, logging: map[id]?.logging !== false }, 200, noStore);
   }
   return json({ error: "method" }, 405);
 }
@@ -391,10 +520,25 @@ async function handleDevices(request, env, url) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname === "/debug") {
+      const slug = url.searchParams.get("slug") || "eng.1";
+      const day = url.searchParams.get("day") || ymd(new Date());
+      const out = { slug, day, kv: !!env.LISTS };
+      try {
+        const r = await fetch(`${ESPN}/${slug}/scoreboard?dates=${day}&limit=300`, { headers: { "user-agent": "Mozilla/5.0", accept: "application/json" } });
+        out.espn_status = r.status;
+        const t = await r.text();
+        out.espn_len = t.length;
+        try { out.espn_events = (JSON.parse(t).events || []).length; } catch (e) { out.espn_body = t.slice(0, 150); }
+      } catch (e) { out.espn_error = String(e); }
+      if (env.LISTS) { const c = await env.LISTS.get(fxKey(slug, day)); out.kv_len = c ? c.length : null; out.kv_head = c ? c.slice(0, 80) : null; }
+      return json(out, 200, { "cache-control": "no-store" });
+    }
     if (url.pathname === "/blocklist") return handleBlocklist(request, env, url);
     if (url.pathname === "/usage") return handleUsage(request, env, url);
     if (url.pathname === "/searchlog") return handleSearchLog(request, env, url);
     if (url.pathname === "/activity") return handleActivity(request, env, url);
+    if (url.pathname === "/icons") return handleIcons(request, env, url);
     if (url.pathname === "/match") return handleMatch(url);
     if (url.pathname === "/devices") return handleDevices(request, env, url);
     if (request.method !== "GET") return json({ error: "method" }, 405);
@@ -412,6 +556,15 @@ export default {
       return json({ error: "bad_tz" }, 400);
     }
 
+    const tzOffsetMinutes = (d, timeZone) => {
+      const p = new Intl.DateTimeFormat("en-US", {
+        timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+      }).formatToParts(d).reduce((acc, x) => { acc[x.type] = x.value; return acc; }, {});
+      const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour === 24 ? 0 : +p.hour, +p.minute, +p.second);
+      return (asUTC - d.getTime()) / 60000;
+    };
+
     // الكاش حسب (التاريخ + المنطقة) فقط، فكل المستخدمين يشاركون نفس الطلب
     const cache = caches.default;
     const freshKey = new Request(`https://cache.nataij/fresh/${date}/${tz}`);
@@ -420,15 +573,17 @@ export default {
     const hit = await cache.match(freshKey);
     if (hit) return hit;
 
-    // ESPN يقسّم الأيام بتوقيت أمريكا، فنجلب يوم قبل ويوم اليوم ويوم بعد (كل وحد لحاله) ثم نفلتر بتاريخ منطقة المستخدم
+    // ESPN يقسّم الأيام بتوقيت UTC، فاليوم المحلي يلامس يوم UTC ثاني حسب فرق التوقيت.
+    // نحسب الاتجاه الصح (قبل أو بعد) بدل ما نجيب 3 أيام ثابتة لكل دوري — يقلل عدد الطلبات ويخليها تحت حد Cloudflare.
     const base = new Date(`${date}T12:00:00Z`);
-    const days = [
-      ymd(new Date(base.getTime() - 86400000)),
-      ymd(base),
-      ymd(new Date(base.getTime() + 86400000)),
-    ];
+    const offsetMin = tzOffsetMinutes(base, tz);
+    const days =
+      offsetMin >= 0
+        ? [ymd(new Date(base.getTime() - 86400000)), ymd(base)] // المنطقة شرق UTC (أو UTC نفسها)
+        : [ymd(base), ymd(new Date(base.getTime() + 86400000))]; // المنطقة غرب UTC
 
-    const results = await Promise.allSettled(Object.keys(LEAGUES).map((s) => fetchLeague(s, days)));
+    const budget = { n: 40 };
+    const results = await Promise.allSettled(Object.keys(LEAGUES).map((s) => fetchLeague(env, s, days, budget)));
     const failed = results.filter((r) => r.status === "rejected").length;
 
     if (failed === results.length) {
@@ -452,7 +607,7 @@ export default {
     // إذا فيه مباراة مباشرة نحدّث أسرع، وإذا بعض الدوريات فشلت نكاشي قليل عشان نعيد المحاولة
     const anyLive = matches.some((m) => m.state === "in");
     const anyPre = matches.some((m) => m.state === "pre");
-    const maxAge = failed
+    const maxAge = failed || !matches.length
       ? 60
       : anyLive
       ? ttl(env, "LIVE_TTL", 60)
@@ -466,5 +621,10 @@ export default {
       ctx.waitUntil(cache.put(staleKey, json(body, 200, { "cache-control": "public, max-age=86400" })));
     }
     return res;
+  },
+
+  // يشتغل تلقائي حسب الـ Cron Trigger (لوحة Cloudflare → الـ Worker → Triggers → Cron Triggers)
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runPrecache(env));
   },
 };
