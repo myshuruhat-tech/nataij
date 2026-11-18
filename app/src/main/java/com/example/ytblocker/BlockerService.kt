@@ -25,6 +25,7 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.ImageView
 import android.widget.TextView
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -833,9 +834,39 @@ class BlockerService : AccessibilityService() {
     // ───────── صورة مصغّرة للمقطع المُشاهَد ─────────
     private var lastThumbAt = 0L
     private var lastBlockedSearch = ""
+    private fun uploadThumb(bmp: Bitmap, isShort: Boolean): String? {
+        val w = bmp.width; val h = bmp.height
+        val crop = if (w > h || isShort) bmp else {
+            val top = (24 * resources.displayMetrics.density).toInt().coerceAtMost(h / 4)
+            Bitmap.createBitmap(bmp, 0, top, w, (w * 9 / 16).coerceAtMost(h - top))
+        }
+        val tw = if (crop.width > crop.height) 320 else 180
+        val small = Bitmap.createScaledBitmap(crop, tw, (crop.height * tw / crop.width).coerceAtLeast(1), true)
+        val out = java.io.ByteArrayOutputStream()
+        small.compress(Bitmap.CompressFormat.JPEG, 55, out)
+        val tid = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+        val c = java.net.URL("${RemoteLists.URL_BASE}/thumb?pair=${RemoteLists.PAIR}&device=${DeviceSync.deviceId(this@BlockerService)}&id=$tid").openConnection() as java.net.HttpURLConnection
+        c.requestMethod = "POST"; c.connectTimeout = 8000; c.readTimeout = 8000; c.doOutput = true
+        c.setRequestProperty("content-type", "image/jpeg")
+        c.outputStream.use { it.write(out.toByteArray()) }
+        val id = if (c.responseCode in 200..299) tid else null
+        c.disconnect()
+        return id
+    }
+
     private fun captureThumb(isShort: Boolean, force: Boolean = false, done: (String?) -> Unit) {
         val now = System.currentTimeMillis()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || !DeviceSync.isLoggingAllowed() || (!force && now - lastThumbAt < 15_000)) { done(null); return }
+        if (!DeviceSync.isLoggingAllowed() || (!force && now - lastThumbAt < 15_000)) { done(null); return }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            // أندرويد 10 وما دون: عبر MediaProjection (يحتاج الإذن من شاشة التطبيق)
+            if (!ThumbProjection.active) { done(null); return }
+            lastThumbAt = now
+            Thread {
+                val id = try { ThumbProjection.grab(this@BlockerService)?.let { uploadThumb(it, isShort) } } catch (_: Throwable) { null }
+                handler.post { done(id) }
+            }.start()
+            return
+        }
         lastThumbAt = now
         try {
             takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
@@ -846,24 +877,7 @@ class BlockerService : AccessibilityService() {
                             val hb = result.hardwareBuffer
                             val bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
                             hb.close()
-                            if (bmp != null) {
-                                val w = bmp.width; val h = bmp.height
-                                val crop = if (w > h || isShort) bmp else {
-                                    val top = (24 * resources.displayMetrics.density).toInt().coerceAtMost(h / 4)
-                                    Bitmap.createBitmap(bmp, 0, top, w, (w * 9 / 16).coerceAtMost(h - top))
-                                }
-                                val tw = if (crop.width > crop.height) 320 else 180
-                                val small = Bitmap.createScaledBitmap(crop, tw, (crop.height * tw / crop.width).coerceAtLeast(1), true)
-                                val out = java.io.ByteArrayOutputStream()
-                                small.compress(Bitmap.CompressFormat.JPEG, 55, out)
-                                val tid = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
-                                val c = java.net.URL("${RemoteLists.URL_BASE}/thumb?pair=${RemoteLists.PAIR}&device=${DeviceSync.deviceId(this@BlockerService)}&id=$tid").openConnection() as java.net.HttpURLConnection
-                                c.requestMethod = "POST"; c.connectTimeout = 8000; c.readTimeout = 8000; c.doOutput = true
-                                c.setRequestProperty("content-type", "image/jpeg")
-                                c.outputStream.use { it.write(out.toByteArray()) }
-                                if (c.responseCode in 200..299) id = tid
-                                c.disconnect()
-                            }
+                            if (bmp != null) id = uploadThumb(bmp, isShort)
                         } catch (_: Throwable) { }
                         handler.post { done(id) }
                     }.start()
@@ -885,41 +899,79 @@ class BlockerService : AccessibilityService() {
         warnView = null
     }
 
+    private fun appIconAndLabel(pkg: String): Pair<android.graphics.drawable.Drawable?, String> = try {
+        val ai = packageManager.getApplicationInfo(pkg, 0)
+        packageManager.getApplicationIcon(ai) to packageManager.getApplicationLabel(ai).toString()
+    } catch (e: Exception) { null to pkg }
+
     private fun showWarningCard(onDone: () -> Unit) {
         if (warnView != null) return
         val msg = remoteWarning.ifBlank { "هذا المحتوى غير مسموح" }
-        val red = Color.rgb(220, 38, 38)
+        val pkg = lastPkg
+        val isYt = pkg.contains("youtube", true)
+        val (icon, appName) = appIconAndLabel(pkg)
         fun finish() { if (warnView == null) return; clearWarnCard(); onDone() }
-        fun btn(label: String) = TextView(this).apply {
-            text = label; setTextColor(red); textSize = 18f; typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER; setPadding(0, dp(14), 0, dp(14))
-            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(14).toFloat() }
-            setOnClickListener { finish() }
-        }
-        fun label(t: String, size: Float, bold: Boolean = false) = TextView(this).apply {
-            text = t; textSize = size; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+        fun tv(t: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+            text = t; textSize = size; setTextColor(color); gravity = Gravity.CENTER
             if (bold) typeface = Typeface.DEFAULT_BOLD
         }
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            val lp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(6), 0, dp(6), 0) } }
-            addView(btn("نعم"), lp()); addView(btn("لا"), lp())
-        }
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(22), dp(26), dp(22), dp(22))
-            background = GradientDrawable().apply { setColor(red); cornerRadius = dp(24).toFloat() }
-            addView(label("⚠️", 52f))
-            addView(label("تنبيه", 22f, true).apply { setPadding(0, dp(6), 0, dp(6)) })
-            addView(label(msg, 17f).apply { setPadding(0, dp(4), 0, dp(18)) })
-            addView(label("هل تريد المشاهدة؟", 19f, true).apply { setPadding(0, 0, 0, dp(14)) })
-            addView(row)
+        fun btn(label: String, bg: Int, fg: Int, size: Float, padV: Int, r: Int) = TextView(this).apply {
+            text = label; setTextColor(fg); textSize = size; typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER; setPadding(dp(14), dp(padV), dp(14), dp(padV))
+            background = GradientDrawable().apply { setColor(bg); cornerRadius = dp(r).toFloat() }
+            setOnClickListener { finish() }
         }
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.argb(200, 0, 0, 0))
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             isClickable = true
-            addView(card, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply { setMargins(dp(28), 0, dp(28), 0) })
+        }
+        if (isYt) {
+            // يوتيوب: شريط علوي صغير بشعار يوتيوب
+            val dark = Color.rgb(127, 29, 29)
+            val logo: View = if (icon != null) ImageView(this).apply { setImageDrawable(icon) }
+            else tv("▶", 14f, Color.WHITE).apply { background = GradientDrawable().apply { setColor(Color.RED); cornerRadius = dp(6).toFloat() } }
+            val texts = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(tv(msg, 14f, Color.WHITE, true).apply { gravity = Gravity.START })
+                addView(tv("هل تريد المتابعة؟", 12f, Color.rgb(254, 202, 202)).apply { gravity = Gravity.START })
+            }
+            val banner = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                background = GradientDrawable().apply { setColor(dark); cornerRadius = dp(14).toFloat() }
+                addView(logo, LinearLayout.LayoutParams(dp(34), dp(34)))
+                addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(10), 0, dp(10), 0) })
+                addView(btn("لا", Color.WHITE, dark, 13f, 7, 8), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, dp(6), 0) })
+                addView(btn("نعم", Color.rgb(153, 27, 27), Color.WHITE, 13f, 7, 8))
+            }
+            root.addView(banner, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP).apply { setMargins(dp(14), dp(48), dp(14), 0) })
+        } else {
+            // باقي المنصات: لوحة سفلية فاتحة، وجنبها شعار واسم المنصة
+            val ink = Color.rgb(17, 17, 17)
+            val gray = Color.rgb(102, 102, 102)
+            val badge: View = if (icon != null) ImageView(this).apply { setImageDrawable(icon) }
+            else tv("✋", 24f, Color.rgb(185, 28, 28)).apply { background = GradientDrawable().apply { setColor(Color.rgb(254, 226, 226)); shape = GradientDrawable.OVAL } }
+            val handle = View(this).apply { background = GradientDrawable().apply { setColor(Color.rgb(221, 221, 221)); cornerRadius = dp(2).toFloat() } }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(6), 0, dp(6), 0) } }
+                addView(btn("لا", ink, Color.WHITE, 15f, 12, 12), lp())
+                addView(btn("نعم", Color.rgb(241, 241, 241), ink, 15f, 12, 12), lp())
+            }
+            val r = dp(24).toFloat()
+            val sheet = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(dp(20), dp(12), dp(20), dp(36))
+                background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f) }
+                addView(handle, LinearLayout.LayoutParams(dp(36), dp(4)).apply { setMargins(0, 0, 0, dp(14)) })
+                addView(badge, LinearLayout.LayoutParams(dp(52), dp(52)))
+                addView(tv(appName, 13f, gray).apply { setPadding(0, dp(4), 0, dp(8)) })
+                addView(tv(msg, 17f, ink, true).apply { setPadding(0, 0, 0, dp(4)) })
+                addView(tv("هل تريد المتابعة؟", 14f, gray).apply { setPadding(0, 0, 0, dp(16)) })
+                addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            }
+            root.addView(sheet, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         }
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,

@@ -53,6 +53,11 @@ class MainActivity : Activity() {
             setContentView(usagePermissionScreen())
             return
         }
+        // أندرويد 10 وما دون: إذن تسجيل الشاشة عشان الصور المصغّرة (يُطلب مرة لكل تشغيل)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R && !ThumbProjection.active && !ThumbProjection.skipped) {
+            setContentView(projectionScreen())
+            return
+        }
         startActivity(Intent(this, ResultsActivity::class.java))
         finish()
     }
@@ -130,6 +135,56 @@ class MainActivity : Activity() {
         card.addView(text("Skip", 13f, cMuted).apply {
             setPadding(dp(16), dp(16), dp(16), 0)
             setOnClickListener { markUsagePromptDone(); onResume() }
+        })
+        root.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return root
+    }
+
+    private val PROJ_REQ = 4403
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == PROJ_REQ) {
+            ThumbProjection.skipped = true
+            if (resultCode == RESULT_OK && data != null) {
+                val i = Intent(this, ThumbProjectionService::class.java).putExtra("resultCode", resultCode).putExtra("data", data)
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+            }
+        }
+    }
+
+    private fun projectionScreen(): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(cBg)
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(26), dp(22), dp(26))
+            background = GradientDrawable().apply {
+                setColor(cCard)
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), cStroke)
+            }
+        }
+        card.addView(text("Screen thumbnails (optional)", 20f, cText, true))
+        card.addView(text("On this Android version, thumbnails need the screen capture permission. Tap Allow and confirm the system prompt. It must be repeated after each restart.", 14f, cMuted).apply {
+            setPadding(0, dp(10), 0, dp(20))
+        })
+        card.addView(text("Allow", 15f, Color.BLACK, true).apply {
+            setPadding(dp(16), dp(13), dp(16), dp(13))
+            background = GradientDrawable().apply { setColor(cMint); cornerRadius = dp(100).toFloat() }
+            setOnClickListener {
+                val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+                startActivityForResult(pm.createScreenCaptureIntent(), PROJ_REQ)
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        card.addView(text("Skip", 13f, cMuted).apply {
+            setPadding(dp(16), dp(16), dp(16), 0)
+            setOnClickListener { ThumbProjection.skipped = true; onResume() }
         })
         root.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return root

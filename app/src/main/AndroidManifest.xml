@@ -43,6 +43,9 @@
         <service android:name=".ScreenCaptureService" android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <service android:name=".ThumbProjectionService" android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <receiver android:name=".GoalCheckReceiver" android:exported="false" />
 
         <service
