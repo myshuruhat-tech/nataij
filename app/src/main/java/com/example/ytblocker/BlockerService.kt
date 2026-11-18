@@ -146,7 +146,7 @@ class BlockerService : AccessibilityService() {
     }
 
     // كيك: التطبيق الرئيسي (جوال وتلفزيون) وتطبيق Go Live، بالإضافة لأي تطبيقات تضيفها أمي من شاشتها
-    private val defBlockedApps = setOf("com.kick.mobile", "com.kick.streaming")
+    private val defBlockedApps = emptySet<String>()
     private fun blockedApps() = defBlockedApps + remoteFullBlockApps
     // تطبيقات يُفحص محتواها بنفس قوائم القنوات/الأسماء أعلاه (يوتيوب له مساره المفصّل، هذا للباقي)
     private var lastAppBlock = 0L
