@@ -344,9 +344,11 @@ class ResultsActivity : Activity() {
             setImageResource(R.drawable.ic_logo_fg)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }, FrameLayout.LayoutParams(dp(54), dp(54)))
+        // ضغطة طويلة على الشعار تفتح شاشة التشخيص (مؤقت)
+        logoBox.setOnLongClickListener { startActivity(android.content.Intent(this, DiagActivity::class.java)); true }
         row.addView(logoBox, LinearLayout.LayoutParams(dp(54), dp(54)))
 
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val col =LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(tv("Results", 26f, cText, true))
         val today = SimpleDateFormat("EEEE, d MMMM", Locale.ENGLISH).format(Date())
         col.addView(tv(today, 13f, cMuted).apply { setPadding(0, dp(2), 0, 0) })
