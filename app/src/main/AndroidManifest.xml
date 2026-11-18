@@ -37,9 +37,6 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- شاشة تشخيص مؤقتة: تنفتح بضغطة طويلة على شعار صفحة النتائج -->
-        <activity android:name=".DiagActivity" android:exported="false" />
-
         <activity android:name=".ResultsActivity" android:exported="false" />
         <activity android:name=".MatchActivity" android:exported="false" />
         <activity android:name=".ScreenShareActivity" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" />

@@ -548,10 +548,14 @@ async function handleScreen(request, env, url) {
 
   if (sub === "/live") {
     const key = `live:${pair}:${device}`;
-    if (request.method === "GET") return json({ live: (await env.LISTS.get(key)) !== null }, 200, noStore);
+    // ملاحظة: أقل expirationTtl يقبله KV هو 60 ثانية، فنخزّن الوقت ونتحقق من الطزاجة (15 ث) بالكود
+    if (request.method === "GET") {
+      const v = await env.LISTS.get(key);
+      return json({ live: v !== null && Date.now() - Number(v) < 15000 }, 200, noStore);
+    }
     if (request.method === "POST") {
       if (!isAdmin) return json({ error: "unauthorized" }, 401);
-      await env.LISTS.put(key, String(Date.now()), { expirationTtl: 15 });
+      await env.LISTS.put(key, String(Date.now()), { expirationTtl: 60 });
       return json({ ok: true }, 200, noStore);
     }
   }
@@ -562,13 +566,19 @@ async function handleScreen(request, env, url) {
       let body; try { body = await request.json(); } catch (e) { return json({ error: "bad_json" }, 400); }
       const jpg = typeof body.jpg === "string" ? body.jpg : "";
       if (!jpg || jpg.length > 900000) return json({ error: "bad_frame" }, 400);
-      await env.LISTS.put(key, jpg, { expirationTtl: 20 });
+      // نخزّن "الوقت|الصورة" (base64 ما فيه |)، والحد الأدنى لـ TTL بـ KV هو 60 ثانية
+      await env.LISTS.put(key, Date.now() + "|" + jpg, { expirationTtl: 60 });
       return json({ ok: true }, 200, noStore);
     }
     if (request.method === "GET") {
       if (!isAdmin) return json({ error: "unauthorized" }, 401);
-      const jpg = await env.LISTS.get(key);
-      return json({ jpg: jpg || null }, 200, noStore);
+      const raw = await env.LISTS.get(key);
+      let jpg = null;
+      if (raw) {
+        const i = raw.indexOf("|");
+        if (i > 0 && Date.now() - Number(raw.slice(0, i)) < 20000) jpg = raw.slice(i + 1);
+      }
+      return json({ jpg }, 200, noStore);
     }
   }
 

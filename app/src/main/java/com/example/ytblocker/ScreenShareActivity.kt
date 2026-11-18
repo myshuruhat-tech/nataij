@@ -169,7 +169,7 @@ class ScreenCaptureService : Service() {
                     bmp.recycle(); cropped.recycle()
                 }
             } catch (e: Exception) { }
-            Thread.sleep(700)
+            Thread.sleep(1200) // KV يسمح بكتابة وحدة بالثانية لكل مفتاح
         }
     }
 

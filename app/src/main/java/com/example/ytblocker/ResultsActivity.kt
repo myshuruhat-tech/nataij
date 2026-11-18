@@ -344,8 +344,6 @@ class ResultsActivity : Activity() {
             setImageResource(R.drawable.ic_logo_fg)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }, FrameLayout.LayoutParams(dp(54), dp(54)))
-        // ضغطة طويلة على الشعار تفتح شاشة التشخيص (مؤقت)
-        logoBox.setOnLongClickListener { startActivity(android.content.Intent(this, DiagActivity::class.java)); true }
         row.addView(logoBox, LinearLayout.LayoutParams(dp(54), dp(54)))
 
         val col =LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
