@@ -618,7 +618,19 @@ async function handleScreen(request, env, url) {
 }
 
 export default {
+  // غلاف يمسك أي استثناء ويرجّعه كـ JSON بدل 500 صامت (مثلاً KV put() limit exceeded)
   async fetch(request, env, ctx) {
+    try {
+      return await this.handle(request, env, ctx);
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      console.error("worker_error", request.method, new URL(request.url).pathname, msg);
+      const limit = /limit exceeded/i.test(msg);
+      return json({ error: limit ? "kv_limit" : "server_error", detail: msg.slice(0, 200) }, limit ? 503 : 500, { "cache-control": "no-store" });
+    }
+  },
+
+  async handle(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/debug") {
       const slug = url.searchParams.get("slug") || "eng.1";
