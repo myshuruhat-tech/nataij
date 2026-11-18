@@ -3,6 +3,7 @@ package com.example.ytblocker
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -51,7 +52,8 @@ object SearchLog {
         if (pkg != candApp || text != candText) {
             candApp = pkg; candText = text; candSince = now
             handler.removeCallbacksAndMessages(STABLE_TOKEN)
-            handler.postAtTime({ trySend(ctx) }, STABLE_TOKEN, now + 1500)
+            // postAtTime يستخدم وقت تشغيل الجهاز (uptime) مو الوقت الحقيقي، وإلا ما ينفّذ أبداً
+            handler.postAtTime({ trySend(ctx) }, STABLE_TOKEN, SystemClock.uptimeMillis() + 1500)
         }
     }
 

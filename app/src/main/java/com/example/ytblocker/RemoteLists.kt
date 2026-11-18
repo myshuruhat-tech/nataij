@@ -32,7 +32,7 @@ object RemoteLists {
         val ctx = ctx0.applicationContext
         Thread {
             try {
-                val c = URL("$URL_BASE/blocklist?pair=$PAIR").openConnection() as HttpURLConnection
+                val c = URL("$URL_BASE/blocklist?pair=$PAIR&device=${DeviceSync.deviceId(ctx)}").openConnection() as HttpURLConnection
                 c.connectTimeout = 8000; c.readTimeout = 8000
                 if (c.responseCode !in 200..299) return@Thread
                 val txt = c.inputStream.bufferedReader().use { it.readText() }

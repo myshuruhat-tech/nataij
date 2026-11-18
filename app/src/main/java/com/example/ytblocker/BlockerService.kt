@@ -8,6 +8,11 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -100,7 +105,9 @@ class BlockerService : AccessibilityService() {
         val r = RemoteLists.load(this)
         if (r == null) {
             handles = defHandles; names = defNames; exact = defExact; shortWords = defShort; remoteBlocking = true
-            remoteFullBlockApps = emptySet(); remoteScanApps = emptySet(); remoteSearchApps = emptySet(); remoteWarning = ""
+            remoteFullBlockApps = emptySet(); remoteScanApps = emptySet(); remoteWarning = ""
+            // قبل ما تزامن الأم أي شي: نفس افتراضيات تطبيقها لسجل البحث
+            remoteSearchApps = setOf("com.google.android.youtube", "com.android.chrome", "com.google.android.googlequicksearchbox")
             return
         }
         handles = r.handles.map { norm(it) }
@@ -122,6 +129,8 @@ class BlockerService : AccessibilityService() {
     }
 
     private val YT = "com.google.android.youtube"
+
+    private fun isScanApp(pkg: String) = pkg != YT && pkg in remoteScanApps
     private val blockTouch = false // true = يمنع الضغط على المخفي، لكن يمنع السكرول لو بدأ عليه
     private val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
     private val covers = mutableListOf<View>()
@@ -140,7 +149,6 @@ class BlockerService : AccessibilityService() {
     private val defBlockedApps = setOf("com.kick.mobile", "com.kick.streaming")
     private fun blockedApps() = defBlockedApps + remoteFullBlockApps
     // تطبيقات يُفحص محتواها بنفس قوائم القنوات/الأسماء أعلاه (يوتيوب له مساره المفصّل، هذا للباقي)
-    private fun scanApps() = remoteScanApps - YT
     private var lastAppBlock = 0L
     private var remoteWarning: String = ""
     private fun showWarningIfSet() {
@@ -164,21 +172,34 @@ class BlockerService : AccessibilityService() {
         // سجل البحث: نفحص فقط لو التطبيق ضمن قائمة أمي للبحث، وفقط أحداث تغيّر النص
         if (pkg != null && e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pkg in remoteSearchApps) {
             e.source?.let { SearchLog.onFocusedTextChanged(this, pkg, it, remoteSearchApps) }
+            val typed = e.source?.text?.toString().orEmpty().trim()
+            if (typed.length >= 2 && matches(typed) && norm(typed) != lastBlockedSearch) {
+                lastBlockedSearch = norm(typed)
+                captureThumb(true, true) { id -> addActivity("بحث ممنوع", typed.take(120), channel = pkg, matched = matchedName(typed) ?: "", thumb = id ?: "") }
+            }
         }
         // تطبيقات ممنوعة بالكامل: يرجّع للشاشة الرئيسية أول ما تنفتح
         if (pkg != null && DeviceSync.isBlockingOnThisDevice() && pkg in blockedApps()) {
             val now = System.currentTimeMillis()
-            if (now - lastAppBlock > 900) {
-                lastAppBlock = now
-                // رجوع أول (يقفل صفحة كيك)، بعدها الشاشة الرئيسية عشان يطلع من التطبيق كلياً
-                showWarningIfSet()
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_HOME) }, 150)
+            val activePkg = rootInActiveWindow?.packageName?.toString()
+            if (activePkg == pkg) {
+                // التطبيق فعلاً قدام الشاشة: كرت التحذير، وأي زر فيه يطلعه
+                if (warnView == null && now - lastAppBlock > 900) {
+                    lastAppBlock = now
+                    showWarningCard {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_HOME) }, 150)
+                    }
+                }
+            } else if (now - lastFloatClose > 2500) {
+                // نافذة عائمة / صورة داخل صورة: رجوع/رئيسية ما تقفلها وتخلي الجوال يرجع للصفحة الأولى بلا توقف، فنقفلها هي
+                lastFloatClose = now
+                closeBlockedFloating(pkg)
             }
             return
         }
         // تطبيقات فحص عامة (غير يوتيوب): تغطية بسيطة لأي نص يطابق القوائم المحظورة
-        if (pkg != null && pkg in scanApps()) {
+        if (pkg != null && isScanApp(pkg)) {
             if (!genericPending) { genericPending = true; handler.postDelayed(genericRefresh, 100) }
             return
         }
@@ -197,7 +218,7 @@ class BlockerService : AccessibilityService() {
     private fun updateGeneric() {
         val active = rootInActiveWindow
         val pkg = active?.packageName?.toString()
-        if (pkg == null || pkg !in scanApps() || !remoteBlocking || !DeviceSync.isBlockingOnThisDevice()) { clearGenericCovers(); return }
+        if (pkg == null || !isScanApp(pkg) || !remoteBlocking || !DeviceSync.isBlockingOnThisDevice()) { clearGenericCovers(); return }
         val rects = mutableListOf<Rect>()
         val screenRect = Rect(0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
         fun collect(n: AccessibilityNodeInfo?) {
@@ -336,7 +357,8 @@ class BlockerService : AccessibilityService() {
         for (i in keys.indices) {
             if (keys[i] !in lastCoverKeys) {
                 val lbl = coverLabels.getOrElse(i) { keys[i] }
-                addActivity("إخفاء", lbl, channel = lbl)
+                val wTxt = whereNow(root)
+                captureThumb(true) { id -> addActivity("إخفاء", lbl, channel = lbl, matched = matchedName(lbl) ?: "", where = wTxt, thumb = id ?: "") }
             }
         }
         lastCoverKeys = curCoverKeys
@@ -348,15 +370,21 @@ class BlockerService : AccessibilityService() {
 
         if (pageLevel || watchHit || openedBlockedVideo) {
             val now = System.currentTimeMillis()
+            if (warnView != null) { clearCovers(); return } // الكرت ظاهر الحين
             if (now - lastBack > 3000) {
                 lastBack = now
                 val bl = backLabel ?: "-"
-                addActivity("حجب", bl, channel = bl)
-                showWarningIfSet()
-                // لو كان في مشغّل مصغّر قبل الرجوع (فيديو ثاني يشتغل) ما نلمسه
+                val whereTxt = whereNow(root)
                 val hadMini = findNode(root, closeWords, true) != null
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                if (!hadMini && (watchHit || openedBlockedVideo)) stopMiniPlayer()
+                val stopMini = !hadMini && (watchHit || openedBlockedVideo)
+                // لقطة الشاشة أول (قبل الكرت)، وبعدها نسجّل ونعرض الكرت
+                captureThumb(true, true) { id ->
+                    addActivity("حجب", bl, channel = bl, matched = matchedName(bl) ?: "", where = whereTxt, thumb = id ?: "")
+                    showWarningCard {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        if (stopMini) stopMiniPlayer()
+                    }
+                }
             }
             clearCovers()
             return
@@ -672,7 +700,12 @@ class BlockerService : AccessibilityService() {
         lastWatchKey = key
         lastWatchTime = now
         if (same) return
-        addActivity("مشاهدة", if (extra.isNullOrBlank()) title else "$title — $extra", channel = extra ?: "")
+        val label = if (extra.isNullOrBlank()) title else "$title — $extra"
+        val isShort = norm(title).startsWith(norm("شورتس"))
+        // صورة مصغّرة للمقطع (بعد ثانية ونص عشان المشغّل يظهر) ثم نسجّل النشاط ومعه معرّفها
+        handler.postDelayed({
+            captureThumb(isShort) { id -> addActivity("مشاهدة", label, channel = extra ?: "", thumb = id ?: "") }
+        }, 1500)
     }
 
     // اكتشاف الفيديو المعروض حاليا من الشاشة نفسها (للتشغيل التلقائي والشورتس والروابط الخارجية)
@@ -778,7 +811,156 @@ class BlockerService : AccessibilityService() {
         addActivity("تطبيق", label, "تطبيق", pkg)
     }
 
-    private fun addActivity(type: String, label: String, kind: String = "", channel: String = "") {
+
+    // ───────── سياق السجل: أي اسم ممنوع طابق، ووين ظهر ─────────
+    private fun matchedName(raw: String): String? {
+        val t = norm(raw)
+        if (t in exact) return t
+        names.firstOrNull { t.contains(it) }?.let { return it }
+        handles.firstOrNull { t.contains(it) }?.let { return it }
+        return null
+    }
+
+    private fun whereNow(root: AccessibilityNodeInfo): String = try {
+        val f = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        when {
+            f != null && f.className?.toString()?.contains("EditText") == true -> "في اقتراحات البحث"
+            detectWatching(root) != null -> "تحت الفيديو (فيديوهات مقترحة)"
+            else -> "في الصفحة الرئيسية أو نتائج البحث"
+        }
+    } catch (e: Exception) { "" }
+
+    // ───────── صورة مصغّرة للمقطع المُشاهَد ─────────
+    private var lastThumbAt = 0L
+    private var lastBlockedSearch = ""
+    private fun captureThumb(isShort: Boolean, force: Boolean = false, done: (String?) -> Unit) {
+        val now = System.currentTimeMillis()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || !DeviceSync.isLoggingAllowed() || (!force && now - lastThumbAt < 15_000)) { done(null); return }
+        lastThumbAt = now
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
+                override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                    Thread {
+                        var id: String? = null
+                        try {
+                            val hb = result.hardwareBuffer
+                            val bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
+                            hb.close()
+                            if (bmp != null) {
+                                val w = bmp.width; val h = bmp.height
+                                val crop = if (w > h || isShort) bmp else {
+                                    val top = (24 * resources.displayMetrics.density).toInt().coerceAtMost(h / 4)
+                                    Bitmap.createBitmap(bmp, 0, top, w, (w * 9 / 16).coerceAtMost(h - top))
+                                }
+                                val tw = if (crop.width > crop.height) 320 else 180
+                                val small = Bitmap.createScaledBitmap(crop, tw, (crop.height * tw / crop.width).coerceAtLeast(1), true)
+                                val out = java.io.ByteArrayOutputStream()
+                                small.compress(Bitmap.CompressFormat.JPEG, 55, out)
+                                val tid = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+                                val c = java.net.URL("${RemoteLists.URL_BASE}/thumb?pair=${RemoteLists.PAIR}&device=${DeviceSync.deviceId(this@BlockerService)}&id=$tid").openConnection() as java.net.HttpURLConnection
+                                c.requestMethod = "POST"; c.connectTimeout = 8000; c.readTimeout = 8000; c.doOutput = true
+                                c.setRequestProperty("content-type", "image/jpeg")
+                                c.outputStream.use { it.write(out.toByteArray()) }
+                                if (c.responseCode in 200..299) id = tid
+                                c.disconnect()
+                            }
+                        } catch (_: Throwable) { }
+                        handler.post { done(id) }
+                    }.start()
+                }
+                override fun onFailure(errorCode: Int) { handler.post { done(null) } }
+            })
+        } catch (_: Throwable) { done(null) }
+    }
+
+    // ───────── كرت التحذير الأحمر: "هل تريد المشاهدة؟" (نعم / لا، وكلاهما يطلعه) ─────────
+    private var warnView: View? = null
+    private var warnTimeout: Runnable? = null
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun clearWarnCard() {
+        warnTimeout?.let { handler.removeCallbacks(it) }
+        warnTimeout = null
+        warnView?.let { v -> runCatching { wm.removeView(v) } }
+        warnView = null
+    }
+
+    private fun showWarningCard(onDone: () -> Unit) {
+        if (warnView != null) return
+        val msg = remoteWarning.ifBlank { "هذا المحتوى غير مسموح" }
+        val red = Color.rgb(220, 38, 38)
+        fun finish() { if (warnView == null) return; clearWarnCard(); onDone() }
+        fun btn(label: String) = TextView(this).apply {
+            text = label; setTextColor(red); textSize = 18f; typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER; setPadding(0, dp(14), 0, dp(14))
+            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(14).toFloat() }
+            setOnClickListener { finish() }
+        }
+        fun label(t: String, size: Float, bold: Boolean = false) = TextView(this).apply {
+            text = t; textSize = size; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            if (bold) typeface = Typeface.DEFAULT_BOLD
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val lp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(6), 0, dp(6), 0) } }
+            addView(btn("نعم"), lp()); addView(btn("لا"), lp())
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(22), dp(26), dp(22), dp(22))
+            background = GradientDrawable().apply { setColor(red); cornerRadius = dp(24).toFloat() }
+            addView(label("⚠️", 52f))
+            addView(label("تنبيه", 22f, true).apply { setPadding(0, dp(6), 0, dp(6)) })
+            addView(label(msg, 17f).apply { setPadding(0, dp(4), 0, dp(18)) })
+            addView(label("هل تريد المشاهدة؟", 19f, true).apply { setPadding(0, 0, 0, dp(14)) })
+            addView(row)
+        }
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(200, 0, 0, 0))
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            isClickable = true
+            addView(card, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply { setMargins(dp(28), 0, dp(28), 0) })
+        }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        if (!runCatching { wm.addView(root, lp) }.isSuccess) { onDone(); return }
+        warnView = root
+        val t = Runnable { finish() }
+        warnTimeout = t
+        handler.postDelayed(t, 12_000)
+    }
+
+    // ───────── قفل نافذة عائمة / PiP لتطبيق ممنوع ─────────
+    private var lastFloatClose = 0L
+    private fun findCloseNode(n: AccessibilityNodeInfo?, depth: Int = 0): AccessibilityNodeInfo? {
+        if (n == null || depth > 8) return null
+        val re = Regex("close|dismiss|cancel|إغلاق|اغلاق|إلغاء", RegexOption.IGNORE_CASE)
+        val txt = (n.contentDescription?.toString() ?: "") + " " + (n.text?.toString() ?: "") + " " + (n.viewIdResourceName ?: "")
+        val t = (n.text?.toString() ?: "").trim()
+        if (re.containsMatchIn(txt) || t == "×" || t == "✕" || t.equals("x", true)) return n
+        for (i in 0 until n.childCount) { val f = findCloseNode(n.getChild(i), depth + 1); if (f != null) return f }
+        return null
+    }
+
+    private fun closeBlockedFloating(pkg: String) {
+        val w = (try { windows.firstOrNull { !it.isActive && it.root?.packageName?.toString() == pkg } } catch (e: Exception) { null }) ?: return
+        val b = Rect(); w.getBoundsInScreen(b)
+        if (w.root?.performAction(AccessibilityNodeInfo.ACTION_DISMISS) == true) return
+        tapAt(b.exactCenterX(), b.exactCenterY())
+        handler.postDelayed({
+            val r2 = try { windows.firstOrNull { it.root?.packageName?.toString() == pkg }?.root } catch (e: Exception) { null }
+            val close = findCloseNode(r2)
+            if (close != null && clickNode(close)) return@postDelayed
+            val dd = resources.displayMetrics.density
+            tapAt(b.right - 14 * dd, b.top + 14 * dd)
+        }, 450)
+    }
+
+    private fun addActivity(type: String, label: String, kind: String = "", channel: String = "", where: String = "", matched: String = "", thumb: String = "") {
         if (!DeviceSync.isLoggingAllowed()) return
         val k = kind.ifBlank { if (norm(label).startsWith(norm("شورتس"))) "شورت" else "فيديو" }
         val ch = channel.ifBlank { label }
@@ -786,6 +968,7 @@ class BlockerService : AccessibilityService() {
             try {
                 val body = org.json.JSONObject().put("type", type).put("kind", k).put("channel", ch).put("label", label)
                     .put("device", DeviceSync.deviceId(this)).put("deviceName", DeviceSync.deviceName())
+                    .put("where", where).put("matched", matched).put("thumb", thumb)
                 val c = java.net.URL("${RemoteLists.URL_BASE}/activity?pair=${RemoteLists.PAIR}").openConnection() as java.net.HttpURLConnection
                 c.requestMethod = "POST"
                 c.connectTimeout = 8000; c.readTimeout = 8000
@@ -895,6 +1078,7 @@ class BlockerService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        clearWarnCard()
         clearCovers()
         clearGenericCovers()
         handler.removeCallbacks(usagePush)
@@ -915,6 +1099,7 @@ class BlockerService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        clearWarnCard()
         clearCovers()
         clearGenericCovers()
     }

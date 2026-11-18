@@ -203,10 +203,15 @@ async function handleBlocklist(request, env, url) {
   const pair = url.searchParams.get("pair") || "";
   if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
   if (!env.LISTS) return json({ error: "no_kv" }, 500);
-  const key = `pair:${pair}`;
+  // لكل جهاز قوائمه المنفصلة. الجهاز اللي ما انحفظ له شي يرجع للقوائم العامة القديمة
+  const dev = url.searchParams.get("device") || "";
+  if (dev && !/^[A-Za-z0-9_-]{6,64}$/.test(dev)) return json({ error: "bad_device" }, 400);
+  const globalKey = `pair:${pair}`;
+  const key = dev ? `pair:${pair}:dev:${dev}` : globalKey;
   const noStore = { "cache-control": "no-store" };
   if (request.method === "GET") {
-    const raw = await env.LISTS.get(key);
+    let raw = await env.LISTS.get(key);
+    if (!raw && dev) raw = await env.LISTS.get(globalKey);
     if (!raw) return json({ empty: true }, 200, noStore);
     return new Response(raw, { headers: { "content-type": "application/json; charset=utf-8", ...noStore } });
   }
@@ -223,6 +228,8 @@ async function handleBlocklist(request, env, url) {
       fullBlockApps: cleanList(body.fullBlockApps).map((s) => s.toLowerCase()),
       scanApps: cleanList(body.scanApps).map((s) => s.toLowerCase()),
       searchApps: cleanList(body.searchApps).map((s) => s.toLowerCase()),
+      // رسالة التحذير اللي تطلع على جوال الولد (Toast) لما يتحجب فيديو أو تطبيق
+      warningMessage: typeof body.warningMessage === "string" ? body.warningMessage.trim().slice(0, 200) : "",
       v: Date.now(),
     };
     if (typeof body.icon === "boolean") data.icon = body.icon; // إظهار/إخفاء أيقونة Tozy
@@ -254,7 +261,9 @@ async function handleUsage(request, env, url) {
   const pair = url.searchParams.get("pair") || "";
   if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
   if (!env.LISTS) return json({ error: "no_kv" }, 500);
-  const key = `usage:${pair}`;
+  const udev = url.searchParams.get("device") || "";
+  if (udev && !/^[A-Za-z0-9_-]{6,64}$/.test(udev)) return json({ error: "bad_device" }, 400);
+  const key = udev ? `usage:${pair}:dev:${udev}` : `usage:${pair}`;
   const noStore = { "cache-control": "no-store" };
   if (request.method === "GET") {
     const raw = await env.LISTS.get(key);
@@ -376,9 +385,32 @@ async function handleActivity(request, env, url) {
     const now = new Date();
     const key = dayKey(now.toISOString().slice(0, 10));
     const entries = await readEntries(key);
-    entries.unshift({ ts: now.toISOString(), type, kind, channel, label, device: clean(body.device, 64), deviceName: clean(body.deviceName, 40) });
+    entries.unshift({ ts: now.toISOString(), type, kind, channel, label, device: clean(body.device, 64), deviceName: clean(body.deviceName, 40), where: clean(body.where, 60), matched: clean(body.matched, 80), thumb: /^[a-f0-9]{8,16}$/.test(body.thumb || "") ? body.thumb : "" });
     await env.LISTS.put(key, JSON.stringify({ entries: entries.slice(0, 20000) })); // بدون انتهاء: يُحفظ للأبد
     return json({ ok: true }, 200, noStore);
+  }
+  return json({ error: "method" }, 405);
+}
+
+// ───────── صور مصغّرة للمقاطع المُشاهَدة (تنحذف بعد 30 يوم) ─────────
+// POST /thumb?pair=CODE&device=ID&id=HEX  body: صورة JPEG   |   GET /thumb?pair=CODE&id=HEX
+async function handleThumb(request, env, url) {
+  const pair = url.searchParams.get("pair") || "";
+  const id = url.searchParams.get("id") || "";
+  if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
+  if (!/^[a-f0-9]{8,16}$/.test(id)) return json({ error: "bad_id" }, 400);
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
+  const key = `thumb:${pair}:${id}`;
+  if (request.method === "GET") {
+    const buf = await env.LISTS.get(key, "arrayBuffer");
+    if (!buf) return new Response("not found", { status: 404 });
+    return new Response(buf, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400" } });
+  }
+  if (request.method === "POST") {
+    const buf = await request.arrayBuffer();
+    if (buf.byteLength === 0 || buf.byteLength > 60000) return json({ error: "bad_size" }, 400);
+    await env.LISTS.put(key, buf, { expirationTtl: 30 * 86400 });
+    return json({ ok: true }, 200, { "cache-control": "no-store" });
   }
   return json({ error: "method" }, 405);
 }
@@ -607,6 +639,7 @@ export default {
     if (url.pathname === "/searchlog") return handleSearchLog(request, env, url);
     if (url.pathname === "/activity") return handleActivity(request, env, url);
     if (url.pathname === "/icons") return handleIcons(request, env, url);
+    if (url.pathname === "/thumb") return handleThumb(request, env, url);
     if (url.pathname === "/match") return handleMatch(url);
     if (url.pathname === "/devices") return handleDevices(request, env, url);
     if (url.pathname === "/screen" || url.pathname.startsWith("/screen/")) return handleScreen(request, env, url);
