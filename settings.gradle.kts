@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "YTBlocker"
+rootProject.name = "Tozy"
 include(":app")
