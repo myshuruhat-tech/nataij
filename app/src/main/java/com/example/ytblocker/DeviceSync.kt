@@ -7,6 +7,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -18,6 +21,12 @@ object DeviceSync {
     const val PAIR = "xeb3vuyM0FOa"
 
     private fun p(ctx: Context) = ctx.getSharedPreferences("device", Context.MODE_PRIVATE)
+
+    // تشخيص مؤقت: يطلع رسالة على الشاشة بدل ما يختفي الخطأ بصمت
+    private val uiHandler = Handler(Looper.getMainLooper())
+    fun dbg(ctx: Context, msg: String) {
+        uiHandler.post { Toast.makeText(ctx.applicationContext, "Tozy-dbg: $msg", Toast.LENGTH_LONG).show() }
+    }
 
     fun deviceId(ctx: Context): String {
         val cur = p(ctx).getString("id", null)
@@ -97,6 +106,7 @@ object DeviceSync {
         val now = System.currentTimeMillis()
         if (!force && now - lastBeat < 300_000) return // كل 5 دقايق كحد أقصى
         lastBeat = now
+        dbg(ctx, "بدأ إرسال النبض...")
         Thread {
             try {
                 val body = JSONObject().put("id", deviceId(ctx)).put("name", deviceName()).put("apps", installedApps(ctx))
@@ -106,14 +116,18 @@ object DeviceSync {
                 c.doOutput = true
                 c.setRequestProperty("content-type", "application/json")
                 c.outputStream.use { it.write(body.toString().toByteArray()) }
-                if (c.responseCode in 200..299) {
+                val code = c.responseCode
+                if (code in 200..299) {
                     val txt = c.inputStream.bufferedReader().use { it.readText() }
                     val jo = JSONObject(txt)
                     lastBlocking = jo.optBoolean("blocking", true)
                     lastLogging = jo.optBoolean("logging", true)
                     uploadIconsIfNeeded(ctx)
+                    dbg(ctx, "النبض نجح ✅ (كود $code)")
+                } else {
+                    dbg(ctx, "النبض رجع كود خطأ: $code")
                 }
-            } catch (e: Exception) { }
+            } catch (e: Exception) { dbg(ctx, "فشل النبض: ${e.javaClass.simpleName}: ${e.message}") }
         }.start()
     }
 
@@ -139,7 +153,7 @@ object DeviceSync {
                         screenNotified = false
                     }
                 }
-            } catch (e: Exception) { }
+            } catch (e: Exception) { dbg(ctx, "فشل فحص طلب الشاشة: ${e.javaClass.simpleName}: ${e.message}") }
         }.start()
     }
 

@@ -158,7 +158,9 @@ class BlockerService : AccessibilityService() {
         if (pkg == packageName) return // أحداث الغطاء نفسه
         // تحديث القوائم والنبض على أي حدث (مو بس يوتيوب)، وإلا سجل البحث بكروم/غيره
         // ما يشتغل أبداً إلى أن يفتح الولد يوتيوب أول مرة
-        maybePull(); DeviceSync.maybeHeartbeat(this); DeviceSync.maybeScreenPoll(this)
+        try { maybePull(); DeviceSync.maybeHeartbeat(this); DeviceSync.maybeScreenPoll(this) } catch (e: Exception) {
+            Toast.makeText(this, "Tozy-dbg: فشل onAccessibilityEvent: ${e.javaClass.simpleName}: ${e.message}", Toast.LENGTH_LONG).show()
+        }
         if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) logAppOpen(pkg)
         // سجل البحث: نفحص فقط لو التطبيق ضمن قائمة أمي للبحث، وفقط أحداث تغيّر النص
         if (pkg != null && e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pkg in remoteSearchApps) {
@@ -884,11 +886,16 @@ class BlockerService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        applyLists()
-        DeviceSync.maybeHeartbeat(this, force = true)
-        maybePull(true)
-        handler.post(usagePush)
-        handler.post(syncLoop)
+        try {
+            Toast.makeText(this, "Tozy-dbg: الخدمة اتصلت ✅", Toast.LENGTH_LONG).show()
+            applyLists()
+            DeviceSync.maybeHeartbeat(this, force = true)
+            maybePull(true)
+            handler.post(usagePush)
+            handler.post(syncLoop)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tozy-dbg: فشل onServiceConnected: ${e.javaClass.simpleName}: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -904,7 +911,11 @@ class BlockerService : AccessibilityService() {
     // فاستدعاؤها كل 10 ثواني آمن وما يكثر الطلبات، وبنفس الوقت يخلي طلب الشاشة يتلقّط بسرعة
     private val syncLoop = object : Runnable {
         override fun run() {
-            maybePull(); DeviceSync.maybeHeartbeat(this@BlockerService); DeviceSync.maybeScreenPoll(this@BlockerService)
+            try {
+                maybePull(); DeviceSync.maybeHeartbeat(this@BlockerService); DeviceSync.maybeScreenPoll(this@BlockerService)
+            } catch (e: Exception) {
+                Toast.makeText(this@BlockerService, "Tozy-dbg: فشل syncLoop: ${e.javaClass.simpleName}: ${e.message}", Toast.LENGTH_LONG).show()
+            }
             handler.postDelayed(this, 10_000)
         }
     }
