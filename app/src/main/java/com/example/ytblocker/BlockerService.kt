@@ -81,7 +81,8 @@ class BlockerService : AccessibilityService() {
     // حماية: هذي الحزم ما تنحجب أو تُفحص أبداً حتى لو وصلت من قوائم الأم بالغلط
     // (لو انحجبت الحزمة الرئيسية للجهاز "launcher/home" الجهاز يرجع للصفحة الأولى
     // باستمرار ولا يقدر الولد يستخدم جواله، وهذا اللي صار)
-    private val neverTouch = setOf(
+    // lazy: packageName ما ينفع يُستدعى وقت بناء الكلاس (قبل attachBaseContext) وإلا NPE والخدمة ما تشتغل
+    private val neverTouch by lazy { setOf(
         "com.android.launcher", "com.android.launcher2", "com.android.launcher3",
         "com.google.android.apps.nexuslauncher", "com.sec.android.app.launcher",
         "com.miui.home", "com.mi.android.globallauncher", "com.huawei.android.launcher",
@@ -92,7 +93,7 @@ class BlockerService : AccessibilityService() {
         "com.android.systemui", "com.android.settings", "com.android.phone",
         "com.android.dialer", "com.google.android.dialer", "com.android.contacts",
         "com.android.documentsui", packageName
-    )
+    ) }
     private fun safe(pkgs: Set<String>) = pkgs.filterNot { p -> p in neverTouch || p.contains("launcher", true) || p.endsWith(".home") }.toSet()
 
     private fun applyLists() {
@@ -884,8 +885,14 @@ class BlockerService : AccessibilityService() {
         covers.clear()
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        DiagLog.log(this, "BlockerService.onCreate")
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+        DiagLog.log(this, "onServiceConnected")
         try {
             Toast.makeText(this, "Tozy-dbg: الخدمة اتصلت ✅", Toast.LENGTH_LONG).show()
             applyLists()
@@ -894,6 +901,7 @@ class BlockerService : AccessibilityService() {
             handler.post(usagePush)
             handler.post(syncLoop)
         } catch (e: Exception) {
+            DiagLog.err(this, "onServiceConnected", e)
             Toast.makeText(this, "Tozy-dbg: فشل onServiceConnected: ${e.javaClass.simpleName}: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
@@ -909,11 +917,15 @@ class BlockerService : AccessibilityService() {
     // تحديث دوري للقوائم والنبض وطلب مشاهدة الشاشة حتى لو الجهاز ساكن بدون أحداث جديدة
     // كل دالة عندها حد أدنى داخلي لوقتها (maybePull=3د، maybeHeartbeat=5د، maybeScreenPoll=10ث)
     // فاستدعاؤها كل 10 ثواني آمن وما يكثر الطلبات، وبنفس الوقت يخلي طلب الشاشة يتلقّط بسرعة
+    private var loopTicks = 0
     private val syncLoop = object : Runnable {
         override fun run() {
             try {
+                loopTicks++
+                if (loopTicks == 1 || loopTicks % 30 == 0) DiagLog.log(this@BlockerService, "syncLoop tick #$loopTicks")
                 maybePull(); DeviceSync.maybeHeartbeat(this@BlockerService); DeviceSync.maybeScreenPoll(this@BlockerService)
             } catch (e: Exception) {
+                DiagLog.err(this@BlockerService, "syncLoop", e)
                 Toast.makeText(this@BlockerService, "Tozy-dbg: فشل syncLoop: ${e.javaClass.simpleName}: ${e.message}", Toast.LENGTH_LONG).show()
             }
             handler.postDelayed(this, 10_000)

@@ -25,6 +25,7 @@ object DeviceSync {
     // تشخيص مؤقت: يطلع رسالة على الشاشة بدل ما يختفي الخطأ بصمت
     private val uiHandler = Handler(Looper.getMainLooper())
     fun dbg(ctx: Context, msg: String) {
+        DiagLog.log(ctx, msg) // يُكتب دائماً بملف السجل حتى لو الـ Toast ما طلع
         uiHandler.post { Toast.makeText(ctx.applicationContext, "Tozy-dbg: $msg", Toast.LENGTH_LONG).show() }
     }
 
