@@ -1,10 +1,13 @@
 package com.example.ytblocker
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
@@ -14,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 class MainActivity : Activity() {
+    private val NOTIF_REQ = 4402
 
     private val cBg = Color.parseColor("#0A0A0C")
     private val cCard = Color.parseColor("#141418")
@@ -39,6 +43,11 @@ class MainActivity : Activity() {
             setContentView(permissionScreen())
             return
         }
+        // صلاحية الإشعارات (لازمة عشان يطلع إشعار "طلب مشاهدة شاشة") — مطلوبة وقت التشغيل من أندرويد 13
+        if (!notifGranted()) {
+            setContentView(notifPermissionScreen())
+            return
+        }
         // صلاحية الاستخدام (تُعرض مرة وحدة)
         if (!UsageReport.hasPermission(this) && !usagePromptDone()) {
             setContentView(usagePermissionScreen())
@@ -46,6 +55,46 @@ class MainActivity : Activity() {
         }
         startActivity(Intent(this, ResultsActivity::class.java))
         finish()
+    }
+
+    private fun notifGranted(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return true
+        return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == NOTIF_REQ) onResume() // نعيد الفحص سواء وافق أو رفض
+    }
+
+    private fun notifPermissionScreen(): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(cBg)
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(26), dp(22), dp(26))
+            background = GradientDrawable().apply {
+                setColor(cCard)
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), cStroke)
+            }
+        }
+        card.addView(text("Notifications permission required", 20f, cText, true))
+        card.addView(text("Needed so screen-watch requests can reach this device.", 14f, cMuted).apply {
+            setPadding(0, dp(10), 0, dp(20))
+        })
+        card.addView(text("Allow", 15f, Color.BLACK, true).apply {
+            setPadding(dp(16), dp(13), dp(16), dp(13))
+            background = GradientDrawable().apply { setColor(cMint); cornerRadius = dp(100).toFloat() }
+            setOnClickListener { requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIF_REQ) }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return root
     }
 
     private fun usagePrefs() = getSharedPreferences("remote", MODE_PRIVATE)
