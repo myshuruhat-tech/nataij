@@ -13,8 +13,8 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-// يرفع للوسيط ملخص دقائق الاستخدام لكل تطبيق لهذا اليوم، عشان شاشة أمي تشوفه.
-// يحتاج صلاحية "الوصول لبيانات الاستخدام" (اختيارية، تُطلب من MainActivity)
+// Uploads a summary of per-app usage minutes for today to the relay, so the admin dashboard can see it.
+// Needs the "usage access" permission (optional, requested from MainActivity)
 object UsageReport {
 
     fun hasPermission(ctx: Context): Boolean {
@@ -37,7 +37,7 @@ object UsageReport {
         pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
     } catch (e: Exception) { pkg }
 
-    // يرفع فورًا بخيط منفصل؛ ما يسوي شي لو الصلاحية مو ممنوحة
+    // Uploads immediately on a separate thread; does nothing if the permission isn't granted
     fun push(ctx0: Context) {
         val ctx = ctx0.applicationContext
         if (!hasPermission(ctx)) return

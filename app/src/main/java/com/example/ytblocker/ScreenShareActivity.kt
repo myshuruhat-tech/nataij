@@ -27,7 +27,7 @@ import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
-// تفتح بعد الضغط على إشعار "طلب مشاهدة شاشة". موافقة صريحة من صاحب الجهاز، كل مرة من جديد.
+// Opens after tapping the "screen view request" notification. Explicit approval from the device owner, every time.
 class ScreenShareActivity : Activity() {
     private lateinit var projectionManager: MediaProjectionManager
     private val REQ_CODE = 7701
@@ -52,18 +52,18 @@ class ScreenShareActivity : Activity() {
             setPadding(50, 120, 50, 50)
         }
         root.addView(TextView(this).apply {
-            text = "فيه طلب لمشاهدة شاشة جهازك الآن.\nتقدر توافق أو ترفض."
+            text = "There is a request to view your screen now.\nYou can approve or deny it."
             textSize = 17f
         })
         val accept = Button(this).apply {
-            text = "موافقة وبدء البث"
+            text = "Approve and start streaming"
             setOnClickListener {
                 clearRequest()
                 startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_CODE)
             }
         }
         val reject = Button(this).apply {
-            text = "رفض"
+            text = "Deny"
             setOnClickListener { clearRequest(); finish() }
         }
         root.addView(accept); root.addView(reject)
@@ -82,7 +82,7 @@ class ScreenShareActivity : Activity() {
     }
 }
 
-// خدمة أمامية (إشعار دائم ما ينشال لأنه إلزامي من أندرويد) تلتقط الشاشة وترسلها
+// Foreground service (a persistent notification that can't be dismissed, required by Android) captures the screen and sends it
 class ScreenCaptureService : Service() {
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -96,7 +96,7 @@ class ScreenCaptureService : Service() {
         val channelId = "screen_capture"
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(channelId) == null) {
-            nm.createNotificationChannel(NotificationChannel(channelId, "بث الشاشة", NotificationManager.IMPORTANCE_LOW))
+            nm.createNotificationChannel(NotificationChannel(channelId, "Screen stream", NotificationManager.IMPORTANCE_LOW))
         }
         val stopIntent = PendingIntent.getService(
             this, 1, Intent(this, ScreenCaptureService::class.java).setAction("stop"),
@@ -104,13 +104,13 @@ class ScreenCaptureService : Service() {
         )
         val notif = if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(this, channelId)
-                .setContentTitle("بث الشاشة شغّال").setContentText("اضغط لإيقافه")
+                .setContentTitle("Screen stream running").setContentText("Tap to stop it")
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setContentIntent(stopIntent).setOngoing(true).build()
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("بث الشاشة شغّال").setContentText("اضغط لإيقافه")
+                .setContentTitle("Screen stream running").setContentText("Tap to stop it")
                 .setSmallIcon(android.R.drawable.ic_menu_view).setOngoing(true).build()
         }
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, notif, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
@@ -169,7 +169,7 @@ class ScreenCaptureService : Service() {
                     bmp.recycle(); cropped.recycle()
                 }
             } catch (e: Exception) { }
-            Thread.sleep(1200) // KV يسمح بكتابة وحدة بالثانية لكل مفتاح
+            Thread.sleep(1200) // KV allows one write per second per key
         }
     }
 
@@ -183,7 +183,7 @@ class ScreenCaptureService : Service() {
             c.connectTimeout = 6000; c.readTimeout = 6000
             val txt = c.inputStream.bufferedReader().use { it.readText() }
             JSONObject(txt).optBoolean("live", false)
-        } catch (e: Exception) { true } // خطأ شبكة مؤقت ما يوقف البث
+        } catch (e: Exception) { true } // A temporary network error shouldn't stop the stream
     }
 
     private fun uploadFrame(deviceId: String, b64: String) {

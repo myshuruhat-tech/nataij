@@ -18,7 +18,7 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
 
-// متابعة فريق + إشعار عند هدف: فحص دوري كل ~20 دقيقة (بدون مكتبات خارجية، AlarmManager بس)
+// Follow a team + notify on a goal: periodic check every ~20 minutes (no external libraries, just AlarmManager)
 object GoalAlarm {
     private const val CHANNEL_ID = "goals"
     private const val REQUEST_CODE = 9001

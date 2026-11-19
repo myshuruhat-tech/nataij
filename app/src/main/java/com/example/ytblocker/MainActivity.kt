@@ -40,21 +40,21 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (!serviceEnabled()) {
-            // الإذن مو مفعّل — شاشة الطلب بدون أي زر تخطي
+            // Permission not enabled — request screen with no skip button
             setContentView(permissionScreen())
             return
         }
-        // صلاحية الإشعارات (لازمة عشان يطلع إشعار "طلب مشاهدة شاشة") — مطلوبة وقت التشغيل من أندرويد 13
+        // Notification permission (needed for the "screen view request" notification) — required at runtime from Android 13
         if (!notifGranted()) {
             setContentView(notifPermissionScreen())
             return
         }
-        // صلاحية الاستخدام (تُعرض مرة وحدة)
+        // Usage access permission (shown once)
         if (!UsageReport.hasPermission(this) && !usagePromptDone()) {
             setContentView(usagePermissionScreen())
             return
         }
-        // أندرويد 10 وما دون: إذن تسجيل الشاشة عشان الصور المصغّرة (يُطلب مرة لكل تشغيل)
+        // Android 10 and below: screen-record permission for thumbnails (requested once per run)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R && !ThumbProjection.active && !ThumbProjection.skipped) {
             setContentView(projectionScreen())
             return
@@ -70,7 +70,7 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == NOTIF_REQ) onResume() // نعيد الفحص سواء وافق أو رفض
+        if (requestCode == NOTIF_REQ) onResume() // Re-check regardless of allow or deny
     }
 
     private fun notifPermissionScreen(): View {

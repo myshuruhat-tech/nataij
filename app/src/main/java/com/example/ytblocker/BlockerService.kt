@@ -1008,7 +1008,7 @@ class BlockerService : AccessibilityService() {
 
     private fun showWarningCard(forPkg: String? = null, onDone: () -> Unit) {
         if (warnView != null) return
-        val msg = remoteWarning.ifBlank { "هذا المحتوى غير مسموح" }
+        val msg = remoteWarning.ifBlank { "This content isn't allowed" }
         // شكل الكرت يتبع التطبيق اللي سبّب الحجب (مو آخر نافذة أرسلت حدث، لأن فيديو كيك العائم كان يغيّره)
         val pkg = forPkg ?: foregroundPkg() ?: lastPkg
         val isYt = pkg.contains("youtube", true)
@@ -1037,7 +1037,7 @@ class BlockerService : AccessibilityService() {
             val texts = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(tv(msg, 14f, Color.WHITE, true).apply { gravity = Gravity.START })
-                addView(tv("هل تريد المتابعة؟", 12f, Color.rgb(254, 202, 202)).apply { gravity = Gravity.START })
+                addView(tv("Do you want to continue?", 12f, Color.rgb(254, 202, 202)).apply { gravity = Gravity.START })
             }
             val banner = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -1045,8 +1045,8 @@ class BlockerService : AccessibilityService() {
                 background = GradientDrawable().apply { setColor(dark); cornerRadius = dp(14).toFloat() }
                 addView(logo, LinearLayout.LayoutParams(dp(34), dp(34)))
                 addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(10), 0, dp(10), 0) })
-                addView(btn("لا", Color.WHITE, dark, 13f, 7, 8), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, dp(6), 0) })
-                addView(btn("نعم", Color.rgb(153, 27, 27), Color.WHITE, 13f, 7, 8))
+                addView(btn("No", Color.WHITE, dark, 13f, 7, 8), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, dp(6), 0) })
+                addView(btn("Yes", Color.rgb(153, 27, 27), Color.WHITE, 13f, 7, 8))
             }
             root.addView(banner, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP).apply { setMargins(dp(14), dp(48), dp(14), 0) })
         } else {
@@ -1059,8 +1059,8 @@ class BlockerService : AccessibilityService() {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(6), 0, dp(6), 0) } }
-                addView(btn("لا", ink, Color.WHITE, 15f, 12, 12), lp())
-                addView(btn("نعم", Color.rgb(241, 241, 241), ink, 15f, 12, 12), lp())
+                addView(btn("No", ink, Color.WHITE, 15f, 12, 12), lp())
+                addView(btn("Yes", Color.rgb(241, 241, 241), ink, 15f, 12, 12), lp())
             }
             val r = dp(24).toFloat()
             val sheet = LinearLayout(this).apply {
@@ -1071,7 +1071,7 @@ class BlockerService : AccessibilityService() {
                 addView(badge, LinearLayout.LayoutParams(dp(52), dp(52)))
                 addView(tv(appName, 13f, gray).apply { setPadding(0, dp(4), 0, dp(8)) })
                 addView(tv(msg, 17f, ink, true).apply { setPadding(0, 0, 0, dp(4)) })
-                addView(tv("هل تريد المتابعة؟", 14f, gray).apply { setPadding(0, 0, 0, dp(16)) })
+                addView(tv("Do you want to continue?", 14f, gray).apply { setPadding(0, 0, 0, dp(16)) })
                 addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             }
             root.addView(sheet, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))

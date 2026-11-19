@@ -5,9 +5,9 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-// يجلب قوائم الحجب من الوسيط (اللي تحدّثه شاشة تطبيق الأم) ويحفظ آخر نسخة
+// Fetches block lists from the relay (updated by the admin app's screen) and caches the latest copy
 object RemoteLists {
-    // غير private عشان UsageReport يستخدمهم لنفس الوسيط/كود الربط
+    // Not private because UsageReport uses them for the same relay/pairing code
     const val URL_BASE = "https://nataij-api.myshuruhat.workers.dev"
     const val PAIR = "xeb3vuyM0FOa"
 
@@ -38,7 +38,7 @@ object RemoteLists {
                 if (c.responseCode !in 200..299) return@Thread
                 val txt = c.inputStream.bufferedReader().use { it.readText() }
                 val o = JSONObject(txt)
-                if (o.optBoolean("empty", false)) return@Thread // ما أرسلت الأم شي بعد: نكمل بالقوائم الثابتة
+                if (o.optBoolean("empty", false)) return@Thread // Admin hasn't sent anything yet: keep using the built-in lists
                 if (txt == p(ctx).getString("data", null)) return@Thread
                 p(ctx).edit().putString("data", txt).apply()
                 onChanged()

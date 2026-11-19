@@ -12,7 +12,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
 
-// كل جهاز فيه Tozy يسجّل نفسه عند الوسيط، والأم تقدر تشغّل/توقف الحجب لكل جهاز لحاله
+// Every device with Tozy registers itself with the relay, and the admin can turn blocking on/off per device
 object DeviceSync {
     const val URL_BASE = "https://nataij-api.myshuruhat.workers.dev"
     const val PAIR = "xeb3vuyM0FOa"
@@ -28,17 +28,17 @@ object DeviceSync {
     }
 
     fun deviceName(): String {
-        val model = Build.MODEL ?: "جهاز"
-        return if (model.length in 1..40) model else "جهاز Tozy"
+        val model = Build.MODEL ?: "Device"
+        return if (model.length in 1..40) model else "Tozy device"
     }
 
-    // آخر حالة حجب وصلت لهذا الجهاز بالذات (قبل أول نبض ناجح نفترض الحجب شغال)
+    // Last blocking state received for this specific device (before the first successful heartbeat, assume blocking is on)
     @Volatile private var lastBlocking = true
     @Volatile private var lastLogging = true
     fun isLoggingAllowed() = lastLogging
     fun isBlockingOnThisDevice() = lastBlocking
 
-    // قائمة التطبيقات المثبّتة (يلي عنده أيقونة بالمشغّل)، عشان الأم تختار منها بدل ما تكتب
+    // List of installed apps (ones with a launcher icon), so the admin can pick from it instead of typing
     private fun installedApps(ctx: Context): org.json.JSONArray {
         val arr = org.json.JSONArray()
         try {
@@ -59,7 +59,7 @@ object DeviceSync {
 
     private var lastBeat = 0L
     private var lastAppsBeat = 0L
-    // يرفع أيقونات التطبيقات (48px) مرة كل 24 ساعة عشان تظهر عند الأم
+    // Uploads app icons (48px) once every 24 hours so they show up on the admin dashboard
     private fun uploadIconsIfNeeded(ctx: Context) {
         val sp = ctx.getSharedPreferences("icons_up", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
@@ -93,7 +93,7 @@ object DeviceSync {
         } catch (e: Exception) { sp.edit().putLong("ts", 0L).apply() }
     }
 
-    // ───── حالة الجهاز لأمي: تُرسل مع كل نبض، وطلبات التفعيل ترجع بالرد ─────
+    // ───── Device status for the admin dashboard: sent with every heartbeat, enable requests come back in the reply ─────
     @Volatile var currentApp: String = ""
     @Volatile var shotOk: Boolean? = null
     private val lastReqNotif = HashMap<String, Long>()
@@ -129,14 +129,14 @@ object DeviceSync {
         } catch (e: Exception) { }
     }
 
-    // طلب من أمي: إشعار على الجهاز يفتح الإعداد المناسب مباشرة
+    // Request from the admin: a notification on the device that opens the right setting directly
     private fun notifyRequest(ctx: Context, type: String) {
         val now = System.currentTimeMillis()
         if (now - (lastReqNotif[type] ?: 0L) < 30 * 60_000) return
         lastReqNotif[type] = now
         val (what, intent) = when (type) {
             "acc", "shot" -> (if (type == "acc") "Accessibility" else "Permissions (Result) ") to Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            "notif" -> "الإشعارات" to Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+            "notif" -> "Notifications" to Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
             "battery" -> "Battery Optimisation" to Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
             else -> return
         }
@@ -154,7 +154,7 @@ object DeviceSync {
     fun maybeHeartbeat(ctx0: Context, force: Boolean = false) {
         val ctx = ctx0.applicationContext
         val now = System.currentTimeMillis()
-        // نبض خفيف كل 15 ثانية (أوامر الأم: إيقاف الحجب/السجل توصل بسرعة)، وقائمة التطبيقات الكاملة كل 10 دقايق فقط
+        // Light heartbeat every 15 seconds (admin commands: stop blocking/logging arrive fast), full app list only every 10 minutes
         if (!force && now - lastBeat < 15_000) return
         lastBeat = now
         val withApps = force || now - lastAppsBeat > 10 * 60_000
@@ -182,7 +182,7 @@ object DeviceSync {
         }.start()
     }
 
-    // ───── طلب مشاهدة الشاشة: يتحقق كل 5 ثواني، وما يكرر الإشعار لو موجود أصلاً ─────
+    // ───── Screen view request: checks every 5 seconds, doesn't repeat the notification if already shown ─────
     private const val SCREEN_CHANNEL_ID = "screen_share"
     private var lastScreenPoll = 0L
     @Volatile private var screenNotified = false
@@ -211,19 +211,19 @@ object DeviceSync {
     private fun notifyScreenRequest(ctx: Context) {
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(SCREEN_CHANNEL_ID) == null) {
-            nm.createNotificationChannel(NotificationChannel(SCREEN_CHANNEL_ID, "طلب مشاهدة الشاشة", NotificationManager.IMPORTANCE_HIGH))
+            nm.createNotificationChannel(NotificationChannel(SCREEN_CHANNEL_ID, "Screen view request", NotificationManager.IMPORTANCE_HIGH))
         }
         val intent = Intent(ctx, ScreenShareActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val pending = PendingIntent.getActivity(ctx, 9001, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val n = if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(ctx, SCREEN_CHANNEL_ID)
-                .setContentTitle("طلب مشاهدة شاشة").setContentText("اضغط للموافقة أو الرفض")
+                .setContentTitle("Screen view request").setContentText("Tap to approve or deny")
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setContentIntent(pending).setAutoCancel(true).build()
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(ctx)
-                .setContentTitle("طلب مشاهدة شاشة").setContentText("اضغط للموافقة أو الرفض")
+                .setContentTitle("Screen view request").setContentText("Tap to approve or deny")
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setContentIntent(pending).setAutoCancel(true).build()
         }

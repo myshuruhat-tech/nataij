@@ -21,7 +21,7 @@ import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.WindowManager
 
-// بديل لقطة الشاشة لأندرويد 10 وما دون (takeScreenshot ما يشتغل قبل أندرويد 11)
+// Screenshot fallback for Android 10 and below (takeScreenshot doesn't work before Android 11)
 object ThumbProjection {
     @Volatile var projection: MediaProjection? = null
     @Volatile var skipped = false
@@ -37,7 +37,7 @@ object ThumbProjection {
         out
     } catch (e: Throwable) { null }
 
-    // يلتقط إطار واحد. لازم يُستدعى من خيط خلفي. يرجّع null لو فشل
+    // Captures a single frame. Must be called from a background thread. Returns null on failure
     fun grab(ctx: Context): Bitmap? {
         val p = projection ?: return null
         var reader: ImageReader? = null
@@ -57,7 +57,7 @@ object ThumbProjection {
                 if (img != null) {
                     var first: Bitmap? = null
                     try { first = toBitmap(img, w, h) } finally { img.close() }
-                    // أول إطار من الشاشة الافتراضية يطلع أحياناً ناقص/أسود (مخربش)؛ ننتظر شوي ونأخذ الأحدث لو وصل
+                    // The first frame from the virtual display sometimes comes out partial/black (garbled); wait a bit and take the latest if it arrives
                     Thread.sleep(250)
                     val img2 = r.acquireLatestImage()
                     if (img2 != null) {
@@ -81,7 +81,7 @@ object ThumbProjection {
     }
 }
 
-// خدمة أمامية تبقي إذن تسجيل الشاشة حيّ (إلزامي من أندرويد، فيها إشعار دائم)
+// Foreground service that keeps the screen-record permission alive (required by Android, has a persistent notification)
 class ThumbProjectionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 

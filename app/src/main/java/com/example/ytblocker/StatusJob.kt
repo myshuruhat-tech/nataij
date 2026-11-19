@@ -9,7 +9,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 
-// نبض كل 15 دقيقة حتى لو إمكانية الوصول مطفية، عشان أمي تعرف إنها مطفية
+// Heartbeat every 15 minutes even if accessibility is off, so the admin dashboard knows it's off
 class StatusJob : JobService() {
     override fun onStartJob(p: JobParameters?): Boolean {
         DeviceSync.maybeHeartbeat(this, force = true)

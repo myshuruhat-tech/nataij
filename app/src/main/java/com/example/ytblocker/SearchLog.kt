@@ -9,12 +9,12 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-// ───────── سجل البحث: يسجّل آخر نص مستقر بصندوق بحث/عنوان محدد بالاسم، داخل تطبيق مسموح به فقط ─────────
-// هذا مو keylogger عام: ثلاث قيود مهمة تحدّ النطاق فعلياً:
-//  1) التطبيق لازم يكون بقائمة Control.getSearchApps (يوتيوب/كروم/جوجل افتراضياً، أو أي تطبيق تضيفه أمي بالاسم)
-//  2) الحقل نفسه لازم يكون "صندوق بحث/عنوان" حسب معرّفه (resource-id) أو تلميحه (hint)، مو أي EditText عشوائي
-//  3) نسجّل النص بعد ما يستقر لثانية ونص (يعني بعد ما يخلص المستخدم يكتب)، مو كل ضغطة حرف
-// ملاحظة: بكروم هذا يشمل الروابط الكاملة اللي تُكتب بشريط العنوان (url_bar)، مو بس كلمات البحث
+// ───────── Search log: records the last stable text in a named search/address box, inside an allowed app only ─────────
+// This is not a general keylogger: three constraints actually limit the scope:
+//  1) The app must be in Control.getSearchApps (YouTube/Chrome/Google by default, or any app added by name via admin)
+//  2) The field itself must be a "search/address box" by its resource-id or hint, not any random EditText
+//  3) We log the text after it stabilizes for 1.5s (i.e. after the user finishes typing), not every keystroke
+// Note: in Chrome this includes full URLs typed in the address bar (url_bar), not just search terms
 object SearchLog {
 
     private val searchIdHints = listOf(
@@ -22,7 +22,7 @@ object SearchLog {
         "omnibox", "url_bar", "search_plate", "search_text"
     )
     private val searchHintWords = listOf(
-        "search", "بحث", "search youtube", "ابحث"
+        "search", "search", "search youtube", "search"
     )
 
     private val handler = Handler(Looper.getMainLooper())
@@ -40,8 +40,8 @@ object SearchLog {
         return searchHintWords.any { hint.contains(it) }
     }
 
-    // يُستدعى من BlockerService على كل حدث تغيّر نص، لحقل التركيز الحالي فقط
-    // يسجّل أي نص مستقر بالحقل (بحث أو رابط كامل بشريط العنوان)، طالما الحقل والتطبيق ضمن النطاق المسموح أعلاه
+    // Called from BlockerService on every text-change event, for the currently focused field only
+    // Logs any stable text in the field (search or full address-bar URL), as long as the field and app are in the allowed scope above
     fun onFocusedTextChanged(ctx: Context, pkg: String, node: AccessibilityNodeInfo, allowedApps: Set<String>) {
         if (pkg !in allowedApps) { reset(); return }
         if (!looksLikeSearchField(node)) { reset(); return }
@@ -52,7 +52,7 @@ object SearchLog {
         if (pkg != candApp || text != candText) {
             candApp = pkg; candText = text; candSince = now
             handler.removeCallbacksAndMessages(STABLE_TOKEN)
-            // postAtTime يستخدم وقت تشغيل الجهاز (uptime) مو الوقت الحقيقي، وإلا ما ينفّذ أبداً
+            // postAtTime uses device uptime, not real time, otherwise it never fires
             handler.postAtTime({ trySend(ctx) }, STABLE_TOKEN, SystemClock.uptimeMillis() + 1500)
         }
     }
@@ -63,7 +63,7 @@ object SearchLog {
         val app = candApp; val text = candText
         if (app.isEmpty() || text.isEmpty()) return
         val now = System.currentTimeMillis()
-        // لا نكرر نفس البحث من نفس التطبيق خلال دقيقتين (يقلل الضجيج لو رجع نفس الحقل)
+        // Don't repeat the same search from the same app within two minutes (reduces noise if the same field re-fires)
         if (app == lastSentApp && text == lastSentText && now - lastSentAt < 120_000) return
         lastSentApp = app; lastSentText = text; lastSentAt = now
         upload(ctx, app, text)

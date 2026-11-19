@@ -9,8 +9,8 @@ android {
 
     signingConfigs {
         getByName("debug") {
-            // مفتاح ثابت ومحفوظ بالمستودع، عشان التوقيع يضل نفسه بكل بناء
-            // وتقدر تثبّت أي نسخة جديدة فوق القديمة بدون ما تحذفها أول
+            // Fixed key stored in the repo, so the signature stays the same on every build
+            // and a new version can be installed over the old one without uninstalling first
             storeFile = file("debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"

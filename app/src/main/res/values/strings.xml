@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Tozy</string>
+    <string name="service_desc">Tozy app running service</string>
+</resources>

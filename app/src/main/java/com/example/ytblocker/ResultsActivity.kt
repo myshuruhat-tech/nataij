@@ -31,7 +31,7 @@ import java.util.concurrent.Executors
 class ResultsActivity : Activity() {
 
     companion object {
-        // رابط الـ Worker من dash.cloudflare.com (بدون / في الآخر). غيّره بعد النشر.
+        // Worker URL from dash.cloudflare.com (no trailing /). Change it after deploying.
         const val WORKER_URL = "https://nataij-api.myshuruhat.workers.dev"
     }
 
@@ -85,7 +85,7 @@ class ResultsActivity : Activity() {
         League("122", "Women's League Cup (England)")
     )
 
-    // ألوان
+    // Colors
     private val cBg = Color.parseColor("#0A0A0C")
     private val cCard = Color.parseColor("#141418")
     private val cCardAlt = Color.parseColor("#1C1C22")
@@ -145,7 +145,7 @@ class ResultsActivity : Activity() {
         super.onPause()
     }
 
-    // ───────── أدوات ─────────
+    // ───────── Helpers ─────────
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun dpf(v: Float) = v * resources.displayMetrics.density
     private fun alpha(c: Int, a: Int) = Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
@@ -175,7 +175,7 @@ class ResultsActivity : Activity() {
     private fun lp(w: Int, h: Int, top: Int = 0): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(w, h).apply { topMargin = dp(top) }
 
-    // ───────── أسماء الفرق بالعربي ─────────
+    // ───────── Team display names ─────────
     private val arNames = listOf(
         "alhilal" to "Al-Hilal", "alnassr" to "Al-Nassr", "alittihad" to "Al-Ittihad", "alahli" to "Al-Ahli",
         "alshabab" to "Al-Shabab", "alettifaq" to "Al-Ettifaq", "alfateh" to "Al-Fateh", "altaawoun" to "Al-Taawoun",
@@ -199,7 +199,7 @@ class ResultsActivity : Activity() {
 
     private fun ar(name: String): String = name // English UI now: ESPN's own team name is used as-is
 
-    // ───────── التحميل ─────────
+    // ───────── Loading ─────────
     private fun dateParam(): String {
         val c = Calendar.getInstance()
         c.add(Calendar.DAY_OF_YEAR, dayOffset)
@@ -235,7 +235,7 @@ class ResultsActivity : Activity() {
             runOnUiThread {
                 if (id != reqId) return@runOnUiThread
                 loading = false
-                // التحديث التلقائي الفاشل ما يمسح النتائج المعروضة
+                // A failed auto-refresh doesn't clear the results already shown
                 failedAll = fresh == null && !(silent && results.isNotEmpty())
                 errorSub = sub
                 if (fresh != null) results = fresh
@@ -308,7 +308,7 @@ class ResultsActivity : Activity() {
         return out
     }
 
-    // ───────── العرض ─────────
+    // ───────── Display ─────────
     private fun render() {
         val y = scroll.scrollY
         content.removeAllViews()
@@ -431,7 +431,7 @@ class ResultsActivity : Activity() {
         if (!any) content.addView(message("No matches", "No matches today for the selected leagues."), lp(MATCH, WRAP, 18))
     }
 
-    // صف مضغوط أفقي بأسلوب FotMob: فريق — شعار — وقت/نتيجة — شعار — فريق
+    // Compact horizontal row, FotMob-style: team — logo — time/score — logo — team
     private fun matchCard(m: Match): View {
         val statusColor = when (m.state) {
             "in" -> cLive
