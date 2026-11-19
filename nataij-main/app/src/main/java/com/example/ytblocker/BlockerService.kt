@@ -1,0 +1,1329 @@
+package com.example.ytblocker
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.os.Build
+import android.content.Context
+import android.content.Intent
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.os.Handler
+import android.widget.Toast
+import android.os.Looper
+import android.view.Display
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.ImageView
+import android.widget.TextView
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class BlockerService : AccessibilityService() {
+
+    private fun norm(s: String) = s.lowercase()
+        .replace(Regex("[\\u064B-\\u065F\\u0640]"), "")
+        .replace(Regex("[أإآ]"), "ا")
+        .replace("ى", "ي").replace("ة", "ه")
+        .replace(Regex("['’‘]"), "")
+        .replace(Regex("[٠-٩]")) { (it.value[0] - '٠').toString() }
+        .replace(Regex("\\s+"), " ").trim()
+
+    // handles: فريدة، contains
+    private val defHandles = listOf(
+        "@d7oomy999", "@POWRibrahim", "@FRS9", "@FFearFFul", "@mjrmgames909",
+        "@POWR_Rayan", "@iiGOATGamingg", "@POWR_ROB", "@xBear1", "@ABS11",
+        "@Abo_treek1", "@Topz", "@Abunoo7", "@POWR_Rakan", "@Siiu-Team",
+        "@POWR-Esports", "@SHoNgxxBoNg", "@xbear-plus", "@sxb3654",
+        "@FRLplus", "@25KLOoODE", "@POWR.Kmstka", "@MSKplusss", "@Moskooo"
+    ).map { norm(it) }
+
+    // أسماء طويلة: contains
+    private val defNames = listOf(
+        "d7oomy_999", "Ibrahim | ابو خليل", "Faris | فارس", "FFearFFul",
+        "MjrmGames", "POWR Rayan", "iiGOATGaming", "POWR ROB",
+        "ابو عابد الشمري", "Turki | ابو تريك", "TOPZ توبز", "ابو نوح",
+        "POWR Rakan", "POWR eSports", "SHoNgxBoNg", "خلودي 25",
+        "كمستكا", "MOSKOO",
+        // كتابات عربية وأجزاء من الأسماء (تظهر داخل عناوين المقاطع والبثوث)
+        "d7oomy", "دحومي", "mjrm", "مجرم قيمز", "مجرم جيمز", "iigoat",
+        "باور ريان", "ريان باور", "باور روب", "روب باور",
+        "باور راكان", "راكان باور", "باور ابراهيم", "ابراهيم باور",
+        "باور اسبورت", "باور ايسبورت", "باور اي سبورت",
+        "شونج بونج", "توبز", "ابو تريك"
+    ).map { norm(it) }
+
+    // أسماء قصيرة: مطابقة تامة
+    private val defExact = listOf("ABS", "SXB", "F R S", "FRL+", "MSK+").map { norm(it) }.toSet()
+    // الأسماء القصيرة تنطبق كلمة مستقلة داخل العنوان (مو جزء من كلمة ثانية)
+    private fun toShort(c: Collection<String>) = c.map {
+        Regex("(?<![\\p{L}\\p{N}])" + Regex.escape(it) + "(?![\\p{L}\\p{N}])")
+    }
+    private val defShort = toShort(defExact + listOf("FRS", "TOPZ").map { norm(it) })
+
+    // القوائم الفعلية: الثابتة افتراضياً، وتتبدل بقوائم الأم لما توصل من الوسيط
+    private var handles: List<String> = defHandles
+    private var names: List<String> = defNames
+    private var exact: Set<String> = defExact
+    private var shortWords: List<Regex> = defShort
+    private var remoteBlocking = true
+    private var remoteFullBlockApps: Set<String> = emptySet()
+    private var remoteScanApps: Set<String> = emptySet()
+    private var remoteSearchApps: Set<String> = emptySet()
+    private var remoteLogApps: Set<String> = emptySet() // تطبيقات "سجل فقط": تسجيل بدون أي حجب
+    private var lastPull = 0L
+
+    // حماية: هذي الحزم ما تنحجب أو تُفحص أبداً حتى لو وصلت من قوائم الأم بالغلط
+    // (لو انحجبت الحزمة الرئيسية للجهاز "launcher/home" الجهاز يرجع للصفحة الأولى
+    // باستمرار ولا يقدر الولد يستخدم جواله، وهذا اللي صار)
+    // lazy: packageName ما ينفع يُستدعى وقت بناء الكلاس (قبل attachBaseContext) وإلا NPE والخدمة ما تشتغل
+    private val neverTouch by lazy { setOf(
+        "com.android.launcher", "com.android.launcher2", "com.android.launcher3",
+        "com.google.android.apps.nexuslauncher", "com.sec.android.app.launcher",
+        "com.miui.home", "com.mi.android.globallauncher", "com.huawei.android.launcher",
+        "com.oppo.launcher", "com.coloros.launcher", "com.vivo.launcher",
+        "com.bbk.launcher2", "net.oneplus.launcher", "com.oneplus.launcher",
+        "com.transsion.XOSLauncher", "com.sonyericsson.home", "com.lge.launcher2",
+        "com.lge.launcher3", "com.motorola.launcher3", "com.asus.launcher",
+        "com.android.systemui", "com.android.settings", "com.android.phone",
+        "com.android.dialer", "com.google.android.dialer", "com.android.contacts",
+        "com.android.documentsui", packageName
+    ) }
+    private fun safe(pkgs: Set<String>) = pkgs.filterNot { p -> p in neverTouch || p.contains("launcher", true) || p.endsWith(".home") }.toSet()
+
+    private fun applyLists() {
+        val r = RemoteLists.load(this)
+        if (r == null) {
+            handles = defHandles; names = defNames; exact = defExact; shortWords = defShort; remoteBlocking = true
+            remoteFullBlockApps = emptySet(); remoteScanApps = emptySet(); remoteLogApps = emptySet(); remoteWarning = ""
+            // قبل ما تزامن الأم أي شي: نفس افتراضيات تطبيقها لسجل البحث
+            remoteSearchApps = setOf("com.google.android.youtube", "com.android.chrome", "com.google.android.googlequicksearchbox")
+            return
+        }
+        handles = r.handles.map { norm(it) }
+        names = r.names.map { norm(it) }
+        exact = r.exact.map { norm(it) }.toSet()
+        shortWords = toShort(exact)
+        remoteBlocking = r.blocking
+        remoteFullBlockApps = safe(r.fullBlockApps.map { it.lowercase() }.toSet())
+        remoteScanApps = safe(r.scanApps.map { it.lowercase() }.toSet())
+        remoteLogApps = safe(r.logApps.map { it.lowercase() }.toSet())
+        remoteSearchApps = safe((r.searchApps + r.scanApps + r.logApps).map { it.lowercase() }.toSet())
+        remoteWarning = r.warningMessage
+    }
+
+    private fun maybePull(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastPull < 20_000) return
+        lastPull = now
+        RemoteLists.pull(this) { handler.post { applyLists() } }
+    }
+
+    private val YT = "com.google.android.youtube"
+
+    private fun isScanApp(pkg: String) = pkg != YT && pkg in remoteScanApps
+    private val blockTouch = false // true = يمنع الضغط على المخفي، لكن يمنع السكرول لو بدأ عليه
+    private val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
+    private val covers = mutableListOf<View>()
+    private val handler = Handler(Looper.getMainLooper())
+    private var pending = false
+    private val refresh = Runnable { pending = false; update() }
+    private var lastBack = 0L
+    private var lastCoverKeys = mutableSetOf<String>()
+
+    private fun matches(raw: String): Boolean {
+        val t = norm(raw)
+        return t in exact || shortWords.any { it.containsMatchIn(t) } || handles.any { t.contains(it) } || names.any { t.contains(it) }
+    }
+
+    // كيك: التطبيق الرئيسي (جوال وتلفزيون) وتطبيق Go Live، بالإضافة لأي تطبيقات تضيفها أمي من شاشتها
+    private val defBlockedApps = emptySet<String>()
+    private fun blockedApps() = defBlockedApps + remoteFullBlockApps
+    // تطبيقات يُفحص محتواها بنفس قوائم القنوات/الأسماء أعلاه (يوتيوب له مساره المفصّل، هذا للباقي)
+    private var lastAppBlock = 0L
+    private var remoteWarning: String = ""
+    private fun showWarningIfSet() {
+        val msg = remoteWarning
+        if (msg.isBlank()) return
+        handler.post { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+    }
+
+    private var evCount = 0
+    private var lastPkg = ""
+
+    override fun onAccessibilityEvent(e: AccessibilityEvent) {
+        run {
+            val pk = e.packageName?.toString()
+            if (pk != null && pk in remoteSearchApps && (e.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) && !urlPending) {
+                urlPending = true
+                handler.postDelayed({ urlPending = false; trackUrl(pk) }, 800)
+            }
+        }
+        if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val p0 = e.packageName?.toString()
+            if (p0 != null && p0 != packageName && p0 != "com.android.systemui" && !p0.contains("inputmethod", true)) {
+                DeviceSync.currentApp = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(p0, 0)).toString() }.getOrDefault(p0)
+            }
+        }
+        val pkg = e.packageName?.toString()
+        evCount++
+        if (pkg != packageName) lastPkg = pkg ?: ""
+        if (pkg == packageName) return // أحداث الغطاء نفسه
+        // تحديث القوائم والنبض على أي حدث (مو بس يوتيوب)، وإلا سجل البحث بكروم/غيره
+        // ما يشتغل أبداً إلى أن يفتح الولد يوتيوب أول مرة
+        try { maybePull(); DeviceSync.maybeHeartbeat(this); DeviceSync.maybeScreenPoll(this) } catch (e: Exception) { }
+        if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) logAppOpen(pkg)
+        // سجل البحث: نفحص فقط لو التطبيق ضمن قائمة أمي للبحث، وفقط أحداث تغيّر النص
+        if (pkg != null && e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pkg in remoteSearchApps) {
+            e.source?.let { SearchLog.onFocusedTextChanged(this, pkg, it, remoteSearchApps) }
+            val typed = e.source?.text?.toString().orEmpty().trim()
+            if (typed.length >= 2 && matches(typed) && norm(typed) != lastBlockedSearch) {
+                lastBlockedSearch = norm(typed)
+                val typedPkg = e.packageName?.toString()
+                captureThumb(true, true) { id ->
+                    addActivity("بحث ممنوع", typed.take(120), channel = pkg ?: "", matched = matchedName(typed) ?: "", thumb = id ?: "")
+                    // رسالة بشكل التطبيق اللي كُتبت فيه الكلمة (يوتيوب مثلاً)، وأي زر يمسح الكلمة من مربع البحث
+                    showWarningCard(typedPkg) { clearFocusedText() }
+                }
+            }
+        }
+        // تطبيقات ممنوعة بالكامل: يرجّع للشاشة الرئيسية أول ما تنفتح
+        if (pkg != null && DeviceSync.isBlockingOnThisDevice() && pkg in blockedApps()) {
+            val now = System.currentTimeMillis()
+            val activePkg = foregroundPkg()
+            if (activePkg == pkg) {
+                // التطبيق فعلاً قدام الشاشة: كرت التحذير، وأي زر فيه يطلعه
+                if (warnView == null && now - lastAppBlock > 900) {
+                    lastAppBlock = now
+                    showWarningCard(pkg) {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_HOME) }, 150)
+                    }
+                }
+            } else if (now - lastFloatClose > 2500) {
+                // نافذة عائمة / صورة داخل صورة: رجوع/رئيسية ما تقفلها وتخلي الجوال يرجع للصفحة الأولى بلا توقف، فنقفلها هي
+                lastFloatClose = now
+                closeBlockedFloating(pkg)
+            }
+            return
+        }
+        // تطبيقات "سجل فقط" (غير يوتيوب): نسجّل استخدامها مع لقطة، بدون أي تغطية أو حجب
+        if (pkg != null && pkg != YT && pkg in remoteLogApps) { logScanUse(pkg, "سجل"); return }
+        // تطبيقات فحص عامة (غير يوتيوب): تغطية بسيطة لأي نص يطابق القوائم المحظورة
+        if (pkg != null && isScanApp(pkg)) {
+            logScanUse(pkg)
+            if (!genericPending) { genericPending = true; handler.postDelayed(genericRefresh, 100) }
+            return
+        }
+        if (pkg == YT && e.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) handleClick(e)
+        // أحداث الكيبورد/النظام ما تمسح الأغطية (كانت تمسحها بعد البحث)؛ update() يمسحها لو يوتيوب ما عاد ظاهر
+        if (pkg != YT && covers.isEmpty() && genericCovers.isEmpty()) return
+        // throttle بدل debounce: التحديث يصير حتى لو يوتيوب يرسل أحداث بلا توقف
+        if (!pending) { pending = true; handler.postDelayed(refresh, 80) }
+    }
+
+    // ───────── فحص عام لتطبيقات scanApps: يغطي أي نص مطابق بدون منطق يوتيوب التفصيلي ─────────
+    // تطبيق "يُفحص": نسجّل استخدامه كل 90 ثانية مع لقطة من الشاشة (اللي يشاهده)، والبحث يُسجَّل من SearchLog
+    private val lastScanLog = HashMap<String, Long>()
+    private fun logScanUse(pkg: String, type: String = "فحص") {
+        if (!DeviceSync.isLoggingAllowed()) return
+        val now = System.currentTimeMillis()
+        if (now - (lastScanLog[pkg] ?: 0L) < 90_000) return
+        lastScanLog[pkg] = now
+        val label = appIconAndLabel(pkg).second
+        captureThumb(true, true) { id -> addActivity(type, label, channel = pkg, thumb = id ?: "") }
+    }
+
+    private var genericPending = false
+    private val genericCovers = mutableListOf<View>()
+    private val genericRefresh = Runnable { genericPending = false; updateGeneric() }
+
+    private fun updateGeneric() {
+        val active = rootInActiveWindow
+        val pkg = active?.packageName?.toString()
+        if (pkg == null || !isScanApp(pkg) || !remoteBlocking || !DeviceSync.isBlockingOnThisDevice()) { clearGenericCovers(); return }
+        ensureWatchdog()
+        val rects = mutableListOf<Rect>()
+        val screenRect = Rect(0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        fun collect(n: AccessibilityNodeInfo?) {
+            if (n == null) return
+            val t = n.text?.toString() ?: n.contentDescription?.toString()
+            if (t != null && matches(t)) {
+                var card: AccessibilityNodeInfo? = n
+                while (card != null && !card.isClickable) card = card.parent
+                val target = card ?: n
+                val r = Rect(); target.getBoundsInScreen(r)
+                if (!r.isEmpty && Rect.intersects(r, screenRect)) rects.add(r)
+                return
+            }
+            for (i in 0 until n.childCount) collect(n.getChild(i))
+        }
+        collect(active)
+        showGenericCovers(rects)
+    }
+
+    private fun showGenericCovers(rects: List<Rect>) {
+        while (genericCovers.size > rects.size) {
+            runCatching { wm.removeView(genericCovers.removeAt(genericCovers.lastIndex)) }
+        }
+        rects.forEachIndexed { i, r ->
+            val lp = WindowManager.LayoutParams(
+                r.width(), r.height(),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                PixelFormat.OPAQUE
+            ).apply { gravity = Gravity.TOP or Gravity.START; x = r.left; y = r.top }
+            if (i < genericCovers.size) wm.updateViewLayout(genericCovers[i], lp)
+            else {
+                val v = View(this).apply { setBackgroundColor(lastGenericColor ?: coverColor()) }
+                wm.addView(v, lp)
+                genericCovers.add(v)
+            }
+        }
+        sampleGenericColors(rects)
+    }
+
+    // لون الغطاء = لون خلفية الصفحة الفعلي (ناخذ بكسل من جنب الغطاء) عشان ما يطلع مستطيل أسود فوق خلفية رمادية
+    private var lastGenericColor: Int? = null
+    private var lastGenericSample = 0L
+    private fun sampleGenericColors(rects: List<Rect>) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || rects.isEmpty()) return
+        val now = System.currentTimeMillis()
+        if (now - lastGenericSample < 1500) return
+        lastGenericSample = now
+        val snap = rects.toList()
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
+                override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                    try {
+                        val hb = result.hardwareBuffer
+                        val bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
+                        hb.close()
+                        if (bmp != null) {
+                            snap.forEachIndexed { i, r ->
+                                val x = (if (r.left >= 8) r.left - 4 else r.right + 4).coerceIn(0, bmp.width - 1)
+                                val y = r.centerY().coerceIn(0, bmp.height - 1)
+                                val c = bmp.getPixel(x, y) or (0xFF shl 24)
+                                if (i == 0) lastGenericColor = c
+                                if (i < genericCovers.size) genericCovers[i].setBackgroundColor(c)
+                            }
+                        }
+                    } catch (_: Throwable) { }
+                }
+                override fun onFailure(errorCode: Int) { }
+            })
+        } catch (_: Throwable) { }
+    }
+
+    private fun clearGenericCovers() {
+        handler.removeCallbacks(genericRefresh)
+        genericPending = false
+        genericCovers.forEach { runCatching { wm.removeView(it) } }
+        genericCovers.clear()
+    }
+
+    private val watchKeys = listOf("watch_player", "watch_while", "player_view", "player_fragment", "watch_list")
+    private val viewWords = listOf(" views", " view", " likes", " like", "مشاهده", "مشاهدات", "اعجاب").map { norm(it) }
+    private var lastIds = ""
+
+    private fun update() {
+        val root = windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() == YT }
+            ?: rootInActiveWindow
+        if (root == null || root.packageName?.toString() != YT) {
+            saveDiag("no-youtube-window", "")
+            clearCovers(); return
+        }
+        // يوتيوب بوضع "سجل فقط" أو الحجب موقوف: ما نغطي ولا نحجب، لكن نكمل نسجّل كل فيديو يشاهده
+        if (YT in remoteLogApps || !remoteBlocking || !DeviceSync.isBlockingOnThisDevice()) {
+            try { trackWatching(root) } catch (e: Exception) { }
+            clearCovers(); return
+        }
+
+        val active = rootInActiveWindow
+        if (active != null && active.packageName?.toString() != YT) { clearCovers(); return }
+
+        val rects = mutableListOf<Rect>()
+        val menus = mutableListOf<AccessibilityNodeInfo?>()
+        val keys = mutableListOf<String>()
+        val ids = sortedSetOf<String>()
+        var pageLevel = false
+        var watchPage = false
+        var watchHit = false
+        var backLabel: String? = null
+        val matched = mutableListOf<String>()
+        val coverLabels = mutableListOf<String>()
+        val screenH = resources.displayMetrics.heightPixels
+        val screenRect = Rect(0, 0, resources.displayMetrics.widthPixels, screenH)
+
+        fun collect(n: AccessibilityNodeInfo?) {
+            if (n == null) return
+            n.viewIdResourceName?.let { id ->
+                ids.add(id)
+                if (watchKeys.any { id.contains(it) }) watchPage = true
+            }
+            val t = n.text?.toString() ?: n.contentDescription?.toString()
+            if (t != null && matches(t)) {
+                val nt = norm(t)
+                val label = t.take(60).replace("\n", " ")
+                // الـ @handle ما يظهر في الصفحة الرئيسية، فظهوره = فيديو/شورتس/قناة مفتوحة
+                if (handles.any { nt.contains(it) }) {
+                    watchHit = true
+                    if (backLabel == null) backLabel = label
+                    matched.add("BACK(handle) | $label")
+                    return
+                }
+                var card: AccessibilityNodeInfo? = n
+                while (card != null && !card.isClickable) card = card.parent
+                if (card == null) {
+                    // ما في عنصر قابل للضغط: نغطي النص نفسه فقط، بدون رجوع
+                    val r0 = Rect()
+                    n.getBoundsInScreen(r0)
+                    if (!r0.isEmpty) { rects.add(r0); menus.add(null); keys.add(nt.take(40)) }
+                    matched.add("TEXTONLY ${r0.toShortString()} | $label")
+                    return
+                }
+                val r = Rect()
+                card.getBoundsInScreen(r)
+                if (r.height() > screenH * 0.7) {
+                    pageLevel = true
+                    if (backLabel == null) backLabel = label
+                    matched.add("PAGELEVEL ${r.toShortString()} | $label")
+                } else if (!r.isEmpty && Rect.intersects(r, screenRect)) {
+                    rects.add(r)
+                    menus.add(findMenu(card, r.height()))
+                    keys.add(nt.take(40))
+                    coverLabels.add(label)
+                    matched.add("COVER ${r.toShortString()} menu=${menus.last() != null} | $label")
+                } else {
+                    matched.add("SKIP(offscreen/empty) ${r.toShortString()} | $label")
+                }
+                return
+            }
+            for (i in 0 until n.childCount) collect(n.getChild(i))
+        }
+        collect(root)
+
+        // الفيديو/البث/الشورتس المعروض حالياً: لو عنوانه فيه اسم ممنوع نطلع منه
+        val playing = detectWatching(root)
+        if (playing != null && (matches(playing.first) || (playing.second?.let { matches(it) } == true))) {
+            watchHit = true
+            if (backLabel == null) backLabel = playing.first.take(60)
+        }
+
+        // سجل النشاط: نسجّل الرجوع لحظة وقوعه، وبطاقات التغطية الجديدة بس (مو كل تحديث)
+        val curCoverKeys = keys.toMutableSet()
+        for (i in keys.indices) {
+            if (keys[i] !in lastCoverKeys) {
+                val lbl = coverLabels.getOrElse(i) { keys[i] }
+                val wTxt = whereNow(root)
+                captureThumb(true) { id -> addActivity("إخفاء", lbl, channel = lbl, matched = matchedName(lbl) ?: "", where = wTxt, thumb = id ?: "") }
+            }
+        }
+        lastCoverKeys = curCoverKeys
+
+        saveDiag("ok watchHit=$watchHit watchPage=$watchPage pageLevel=$pageLevel covers=${rects.size}", ids.joinToString("\n"))
+
+        // (أُلغي الكشف بمعرّفات العناصر: كان يطلعك من يوتيوب وانت بالصفحة الرئيسية)
+        val openedBlockedVideo = false
+
+        if (pageLevel || watchHit || openedBlockedVideo) {
+            val now = System.currentTimeMillis()
+            if (warnView != null) { clearCovers(); return } // الكرت ظاهر الحين
+            if (now - lastBack > 3000) {
+                lastBack = now
+                val bl = backLabel ?: "-"
+                val whereTxt = whereNow(root)
+                val hadMini = findNode(root, closeWords, true) != null
+                val stopMini = !hadMini && (watchHit || openedBlockedVideo)
+                // لقطة الشاشة أول (قبل الكرت)، وبعدها نسجّل ونعرض الكرت
+                captureThumb(true, true) { id ->
+                    addActivity("حجب", bl, channel = bl, matched = matchedName(bl) ?: "", where = whereTxt, thumb = id ?: "")
+                    showWarningCard(YT) {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        if (stopMini) stopMiniPlayer()
+                    }
+                }
+            }
+            clearCovers()
+            return
+        }
+        trackWatching(root)
+        showCovers(rects)
+
+        // ضغط تلقائي على ⋮ ← "Don't recommend channel"
+        if (autoDontRecommend && !busy && System.currentTimeMillis() - lastAuto > 2000) {
+            val i = keys.indices.firstOrNull { menus[it] != null && keys[it] !in skipKeys }
+            if (i != null) autoDontRecommend(menus[i]!!, keys[i])
+        }
+    }
+
+    private val autoDontRecommend = true // false = غطاء فقط بدون ضغط تلقائي
+    private var busy = false
+    private var lastAuto = 0L
+    private val skipKeys = mutableSetOf<String>()
+
+    private val menuWords = listOf(
+        "action menu", "more options", "المزيد من الخيارات", "قائمه الاجراءات"
+    ).map { norm(it) }
+    private val dontWords = listOf(
+        "dont recommend channel", "عدم اقتراح هذه القناه", "عدم اقتراح القناه"
+    ).map { norm(it) }
+
+    private val notInterestedWords = listOf(
+        "not interested", "غير مهتم", "لست مهتما", "لست مهتم"
+    ).map { norm(it) }
+
+    private fun findMenu(card: AccessibilityNodeInfo, cardH: Int): AccessibilityNodeInfo? {
+        var a: AccessibilityNodeInfo? = card
+        var depth = 0
+        while (a != null && depth < 4) {
+            val r = Rect()
+            a.getBoundsInScreen(r)
+            if (depth > 0 && r.height() > cardH * 1.5) break
+            findNode(a, menuWords)?.let { return it }
+            a = a.parent
+            depth++
+        }
+        return null
+    }
+
+    private fun autoDontRecommend(menu: AccessibilityNodeInfo, key: String) {
+        busy = true
+        lastAuto = System.currentTimeMillis()
+        if (!clickNode(menu)) {
+            skipKeys.add(key); busy = false; return
+        }
+        var attempts = 0
+        val r = object : Runnable {
+            override fun run() {
+                attempts++
+                val roots = windows.mapNotNull { it.root }.filter { it.packageName?.toString() == YT }
+                // الأفضلية لـ "Don't recommend channel"، وإذا ما ظهر بعد محاولتين نضغط "Not interested"
+                val node = roots.firstNotNullOfOrNull { findNode(it, dontWords) }
+                    ?: if (attempts >= 2) roots.firstNotNullOfOrNull { findNode(it, notInterestedWords) } else null
+                if (node != null) {
+                    clickNode(node)
+                    skipKeys.add(key)
+                    handler.postDelayed({ busy = false }, 1200)
+                    return
+                }
+                if (attempts < 5) {
+                    handler.postDelayed(this, 300)
+                } else {
+                    // ما لقينا الخيار: نسجّل محتوى القائمة ونسكّرها
+                    logControls(roots.firstOrNull())
+                    skipKeys.add(key)
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    handler.postDelayed({ busy = false }, 800)
+                }
+            }
+        }
+        handler.postDelayed(r, 400)
+    }
+
+    private val closeWords = listOf(
+        "close miniplayer", "close mini player", "close mini-player",
+        "اغلاق المشغل المصغر", "اغلاق المشغل الصغير"
+    ).map { norm(it) }
+
+    private fun findNode(n: AccessibilityNodeInfo?, words: List<String>, visibleOnly: Boolean = false): AccessibilityNodeInfo? {
+        if (n == null) return null
+        val t = n.contentDescription?.toString() ?: n.text?.toString()
+        if (t != null) {
+            val nt = norm(t)
+            if (words.any { nt.contains(it) } && (!visibleOnly || n.isVisibleToUser)) return n
+        }
+        for (i in 0 until n.childCount) findNode(n.getChild(i), words, visibleOnly)?.let { return it }
+        return null
+    }
+
+    private fun clickNode(n: AccessibilityNodeInfo): Boolean {
+        var c: AccessibilityNodeInfo? = n
+        while (c != null && !c.isClickable) c = c.parent
+        return c?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    }
+
+    // بعد الرجوع يوتيوب يصغّر الفيديو ويكمل صوته. الاستراتيجيات بالترتيب:
+    // 1) اسم الزر (closeWords) أو معرّف فيه mini+close  2) أقرب عنصر قابل للضغط يمين زر pause/play
+    // 3) ضغطة بالإحداثيات يمين زر pause  4) سحب المشغّل المصغّر لليمين
+    private fun stopMiniPlayer() {
+        var attempts = 0
+        var acted = false
+        val r = object : Runnable {
+            override fun run() {
+                attempts++
+                val root = windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() == YT }
+                if (root == null) {
+                    if (attempts < 6) handler.postDelayed(this, 400)
+                    return
+                }
+                if (attempts == 2) logMini(root) // دايم نسجّل شكل أسفل الشاشة بعد الرجوع
+                val named = findNode(root, closeWords, true) ?: findCloseById(root)
+                val pause = findMiniPause(root)
+                if (named == null && pause == null) {
+                    // ما في مشغّل مصغّر: إما انغلق (نجح) أو ما ظهر بعد
+                    if (!acted && attempts < 6) handler.postDelayed(this, 400)
+                    else if (!acted) logMini(root)
+                    return
+                }
+                acted = true
+                when {
+                    named != null && attempts <= 2 -> clickNode(named)
+                    pause != null && attempts <= 4 -> {
+                        val btn = rightmostClickable(root, pause)
+                        if (btn != null) clickNode(btn)
+                        else if (attempts >= 3) {
+                            val b = Rect(); pause.getBoundsInScreen(b)
+                            tapAt(minOf(b.right + b.width() * 0.9f, resources.displayMetrics.widthPixels - 4f), b.centerY().toFloat())
+                        }
+                    }
+                    pause != null && attempts <= 6 -> {
+                        val b = Rect(); pause.getBoundsInScreen(b)
+                        tapAt(minOf(b.right + b.width() * 0.9f, resources.displayMetrics.widthPixels - 4f), b.centerY().toFloat())
+                    }
+                    pause != null -> swipeAway(pause)
+                }
+                if (attempts < 9) handler.postDelayed(this, 700) else logMini(root)
+            }
+        }
+        handler.postDelayed(r, 400)
+    }
+
+    private fun findCloseById(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var found: AccessibilityNodeInfo? = null
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null || found != null) return
+            val id = n.viewIdResourceName?.lowercase()
+            if (id != null && id.contains("close") && id.contains("mini") && n.isVisibleToUser) { found = n; return }
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(root)
+        return found
+    }
+
+    // زر pause/play للمشغّل المصغّر: صغير وبأسفل الشاشة (يستبعد بطاقات الفيديو الكبيرة)
+    private fun findMiniPause(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val dm = resources.displayMetrics
+        var found: AccessibilityNodeInfo? = null
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null || found != null) return
+            val t = n.contentDescription?.toString() ?: n.text?.toString()
+            if (t != null) {
+                val nt = norm(t)
+                if (nt.contains("pause") || nt == "play video" || nt == "play") {
+                    val r = Rect(); n.getBoundsInScreen(r)
+                    if (!r.isEmpty && r.top > dm.heightPixels * 0.55 && r.width() < dm.widthPixels * 0.3 &&
+                        r.height() < dm.heightPixels * 0.15) { found = n; return }
+                }
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(root)
+        return found
+    }
+
+    // أبعد عنصر قابل للضغط على يمين زر pause وبنفس الصف (غالباً زر X)
+    private fun rightmostClickable(root: AccessibilityNodeInfo, pause: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val p = Rect(); pause.getBoundsInScreen(p)
+        val sw = resources.displayMetrics.widthPixels
+        var best: AccessibilityNodeInfo? = null
+        var bestLeft = -1
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null) return
+            if (n.isClickable && n != pause) {
+                val r = Rect(); n.getBoundsInScreen(r)
+                val cy = r.centerY()
+                if (!r.isEmpty && r.left >= p.right - 4 && cy >= p.top - p.height() / 2 &&
+                    cy <= p.bottom + p.height() / 2 && r.width() < sw * 0.3 && r.left > bestLeft) {
+                    best = n; bestLeft = r.left
+                }
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(root)
+        return best
+    }
+
+    private fun tapAt(x: Float, y: Float) {
+        val path = Path().apply { moveTo(x, y) }
+        val g = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 50)).build()
+        dispatchGesture(g, null, null)
+    }
+
+    private fun swipeAway(pause: AccessibilityNodeInfo) {
+        val b = Rect(); pause.getBoundsInScreen(b)
+        val w = resources.displayMetrics.widthPixels.toFloat()
+        val y = b.centerY().toFloat()
+        val path = Path().apply { moveTo(w * 0.35f, y); lineTo(w * 0.98f, y) }
+        val g = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 180)).build()
+        dispatchGesture(g, null, null)
+    }
+
+    // يسجّل كل عنصر بأسفل الشاشة (آخر 40%): الصنف، المعرّف، الوصف، النص، قابل للضغط، الحدود
+    private fun logMini(root: AccessibilityNodeInfo?) {
+        val sb = StringBuilder()
+        val h = resources.displayMetrics.heightPixels
+        var cnt = 0
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null || cnt > 60) return
+            val r = Rect(); n.getBoundsInScreen(r)
+            if (!r.isEmpty && r.top >= h * 0.6 && (n.isClickable || n.contentDescription != null || n.text != null)) {
+                cnt++
+                sb.append(n.className?.toString()?.substringAfterLast('.') ?: "-")
+                    .append(" id=").append(n.viewIdResourceName?.substringAfter(":id/") ?: "-")
+                    .append(" d=").append(n.contentDescription?.toString()?.take(40) ?: "-")
+                    .append(" t=").append(n.text?.toString()?.take(30) ?: "-")
+                    .append(if (n.isClickable) " CLK " else " ")
+                    .append(r.toShortString()).append('\n')
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(root)
+    }
+
+    // للتشخيص: أسماء الأزرار اللي فيها mini/close/pause
+    private fun logControls(root: AccessibilityNodeInfo?) {
+        val found = mutableListOf<String>()
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null || found.size > 40) return
+            val t = n.contentDescription?.toString() ?: n.text?.toString()
+            if (t != null) {
+                val l = t.lowercase()
+                if (l.contains("mini") || l.contains("close") || l.contains("pause") || l.contains("recommend") || l.contains("interested") || l.contains("report") || l.contains("المصغر") || l.contains("اغلاق") || l.contains("إغلاق"))
+                    found.add(t.take(50))
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(root)
+    }
+
+    // ───────── سجل المشاهدة: أي فيديو يُفتح (حتى غير المحظور) ─────────
+    private val sepRegex = Regex("\\s[-–—]\\s")
+    private val cardHints = listOf(
+        "play video", "play short", "views", "minute", "second", "hour",
+        "تشغيل الفيديو", "مشاهده", "مشاهدات", "دقيقه", "دقائق", "دقيقتان", "ثانيه", "ثواني", "ثوان", "ساعه", "ساعات"
+    ).map { norm(it) }
+
+    private var lastWatchKey = ""
+    private var lastWatchTime = 0L
+    private var lastDetect = 0L
+    private var candKey = ""
+    private var candSince = 0L
+    private var lastWatchDiag = ""
+    private val recheck = Runnable { if (!pending) { pending = true; handler.post(refresh) } }
+
+    // بطاقة فيديو في يوتيوب: وصفها يكون "العنوان - المدة - القناة - المشاهدات ..."
+    private fun looksLikeVideoCard(d: String): Boolean {
+        if (!sepRegex.containsMatchIn(d)) return false
+        val nd = norm(d)
+        return cardHints.any { nd.contains(it) }
+    }
+
+    private fun parseCard(d: String): Pair<String, String?> {
+        val parts = d.split(sepRegex).map { it.trim() }.filter { it.isNotEmpty() }
+        val title = (parts.firstOrNull() ?: d).take(110)
+        val channel = parts.drop(1).firstOrNull { p ->
+            val np = norm(p)
+            p.none { it.isDigit() } && !np.contains("play") && !np.contains("تشغيل") &&
+                !np.contains("views") && !np.contains("مشاهد") && p.length in 2..40
+        }
+        return title to channel
+    }
+
+    private fun handleClick(e: AccessibilityEvent) {
+        var n: AccessibilityNodeInfo? = e.source
+        var hops = 0
+        while (n != null && hops < 6) {
+            val d = n.contentDescription?.toString()
+            if (d != null && looksLikeVideoCard(d)) {
+                // القنوات المحظورة تُسجَّل كـ "حجب" من مسار الحجب نفسه
+                if (!matches(d)) {
+                    val (title, channel) = parseCard(d)
+                    logWatch(title, channel)
+                }
+                return
+            }
+            n = n.parent
+            hops++
+        }
+    }
+
+    private fun logWatch(title: String, extra: String?) {
+        val key = norm(title).take(60)
+        if (key.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val same = key == lastWatchKey && now - lastWatchTime < 10 * 60_000
+        lastWatchKey = key
+        lastWatchTime = now
+        if (same) return
+        val label = if (extra.isNullOrBlank()) title else "$title — $extra"
+        val isShort = norm(title).startsWith(norm("شورتس"))
+        // صورة مصغّرة للمقطع (بعد ثانية ونص عشان المشغّل يظهر) ثم نسجّل النشاط ومعه معرّفها
+        handler.postDelayed({
+            captureThumb(isShort) { id -> addActivity("مشاهدة", label, channel = extra ?: "", thumb = id ?: "") }
+        }, 1500)
+    }
+
+    // اكتشاف الفيديو المعروض حاليا من الشاشة نفسها (للتشغيل التلقائي والشورتس والروابط الخارجية)
+    private fun trackWatching(root: AccessibilityNodeInfo) {
+        val now = System.currentTimeMillis()
+        if (now - lastDetect < 600) return
+        lastDetect = now
+        val found = detectWatching(root)
+        if (found == null) {
+            candKey = ""
+            saveWatchDiag("لا يوجد فيديو معروض")
+            return
+        }
+        val key = norm(found.first).take(60)
+        if (key != candKey) {
+            candKey = key
+            candSince = now
+            handler.removeCallbacks(recheck)
+            handler.postDelayed(recheck, 1300)
+        } else if (now - candSince >= 1200) {
+            logWatch(found.first, found.second)
+        }
+        saveWatchDiag(found.first + (found.second?.let { " | $it" } ?: ""))
+    }
+
+    private fun saveWatchDiag(s: String) {
+        if (s == lastWatchDiag) return
+        lastWatchDiag = s
+    }
+
+    private fun detectWatching(root: AccessibilityNodeInfo): Pair<String, String?>? {
+        val dm = resources.displayMetrics
+        val h = dm.heightPixels
+        val w = dm.widthPixels
+        var playerBottom = -1
+        var reel = false
+        val handlesFound = mutableListOf<String>()
+        val reelTexts = mutableListOf<String>()
+        val titles = mutableListOf<Pair<Int, String>>()
+
+        fun walk(n: AccessibilityNodeInfo?, depth: Int, inCard: Boolean) {
+            if (n == null || depth > 40) return
+            val id = n.viewIdResourceName?.substringAfter(":id/")?.lowercase()
+            val text = n.text?.toString()
+            val card = inCard || (n.contentDescription?.toString()?.let { looksLikeVideoCard(it) } == true)
+            if (id != null) {
+                val r = Rect()
+                if (id.contains("reel") || id.contains("shorts")) {
+                    n.getBoundsInScreen(r)
+                    if (n.isVisibleToUser && r.height() > h * 0.6) reel = true
+                    if (!text.isNullOrBlank()) reelTexts.add(text.trim())
+                }
+                if (id.contains("watch_player") || id.contains("player_view")) {
+                    n.getBoundsInScreen(r)
+                    if (n.isVisibleToUser && r.width() > w * 0.5 && r.height() > h * 0.15) {
+                        playerBottom = maxOf(playerBottom, r.bottom)
+                    }
+                }
+                if (!card && id.contains("title") && !id.contains("subtitle") &&
+                    !text.isNullOrBlank() && text.trim().length >= 3 && n.isVisibleToUser) {
+                    n.getBoundsInScreen(r)
+                    titles.add(r.top to text.trim())
+                }
+            }
+            if (!text.isNullOrBlank() && text.startsWith("@") && text.length < 40 && n.isVisibleToUser) {
+                handlesFound.add(text.trim())
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1, card)
+        }
+        walk(root, 0, false)
+
+        if (reel) {
+            val handle = handlesFound.firstOrNull()
+            val caption = reelTexts.firstOrNull { !it.startsWith("@") && it.length >= 8 && it.any { c -> !c.isDigit() } }
+            val head = caption?.take(90) ?: handle ?: ""
+            return ("شورتس" + if (head.isNotEmpty()) " · $head" else "") to (if (caption != null) handle else null)
+        }
+        if (playerBottom > 0) {
+            val t = titles
+                .filter { it.first >= playerBottom - 8 && it.first <= playerBottom + h * 0.40 }
+                .minByOrNull { it.first }
+            if (t != null) return t.second.take(110) to null
+        }
+        return null
+    }
+
+    // سجل فتح أي تطبيق (غير يوتيوب، ويتجاهل الشاشة الرئيسية والنظام)، بدون تكرار لنفس التطبيق خلال 5 دقايق
+    private var lastAppLogPkg = ""
+    private var lastAppLogTs = 0L
+    private val homePkgs by lazy {
+        try {
+            packageManager.queryIntentActivities(android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME), 0)
+                .map { it.activityInfo.packageName }.toSet()
+        } catch (e: Exception) { emptySet<String>() }
+    }
+    private fun logAppOpen(pkg: String) {
+        if (pkg == YT || pkg == "android" || pkg.startsWith("com.android.systemui") || pkg in homePkgs) return
+        val now = System.currentTimeMillis()
+        if (pkg == lastAppLogPkg && now - lastAppLogTs < 5 * 60 * 1000) return
+        if (packageManager.getLaunchIntentForPackage(pkg) == null) return
+        val label = try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() } catch (e: Exception) { pkg }
+        lastAppLogPkg = pkg; lastAppLogTs = now
+        addActivity("تطبيق", label, "تطبيق", pkg)
+    }
+
+
+    // ───────── سياق السجل: أي اسم ممنوع طابق، ووين ظهر ─────────
+    private fun matchedName(raw: String): String? {
+        val t = norm(raw)
+        if (t in exact) return t
+        names.firstOrNull { t.contains(it) }?.let { return it }
+        handles.firstOrNull { t.contains(it) }?.let { return it }
+        return null
+    }
+
+    private fun whereNow(root: AccessibilityNodeInfo): String = try {
+        val f = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        when {
+            f != null && f.className?.toString()?.contains("EditText") == true -> "في اقتراحات البحث"
+            detectWatching(root) != null -> "تحت الفيديو (فيديوهات مقترحة)"
+            else -> "في الصفحة الرئيسية أو نتائج البحث"
+        }
+    } catch (e: Exception) { "" }
+
+    // ───────── صورة مصغّرة للمقطع المُشاهَد ─────────
+    private var lastThumbAt = 0L
+    private var lastBlockedSearch = ""
+    private fun uploadThumb(bmp: Bitmap, isShort: Boolean): String? {
+        val w = bmp.width; val h = bmp.height
+        val crop = if (w > h || isShort) bmp else {
+            val top = (24 * resources.displayMetrics.density).toInt().coerceAtMost(h / 4)
+            Bitmap.createBitmap(bmp, 0, top, w, (w * 9 / 16).coerceAtMost(h - top))
+        }
+        val tw = if (crop.width > crop.height) 520 else 300
+        val small = Bitmap.createScaledBitmap(crop, tw, (crop.height * tw / crop.width).coerceAtLeast(1), true)
+        val out = java.io.ByteArrayOutputStream()
+        small.compress(Bitmap.CompressFormat.JPEG, 72, out)
+        val tid = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+        val c = java.net.URL("${RemoteLists.URL_BASE}/thumb?pair=${RemoteLists.PAIR}&device=${DeviceSync.deviceId(this@BlockerService)}&id=$tid").openConnection() as java.net.HttpURLConnection
+        c.requestMethod = "POST"; c.connectTimeout = 8000; c.readTimeout = 8000; c.doOutput = true
+        c.setRequestProperty("content-type", "image/jpeg")
+        c.outputStream.use { it.write(out.toByteArray()) }
+        val id = if (c.responseCode in 200..299) tid else null
+        c.disconnect()
+        return id
+    }
+
+    private fun captureThumb(isShort: Boolean, force: Boolean = false, done: (String?) -> Unit) {
+        val now = System.currentTimeMillis()
+        if (!DeviceSync.isLoggingAllowed() || (!force && now - lastThumbAt < 15_000)) { done(null); return }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            // أندرويد 10 وما دون: عبر MediaProjection (يحتاج الإذن من شاشة التطبيق)
+            if (!ThumbProjection.active) { done(null); return }
+            lastThumbAt = now
+            Thread {
+                val id = try { ThumbProjection.grab(this@BlockerService)?.let { uploadThumb(it, isShort) } } catch (_: Throwable) { null }
+                handler.post { done(id) }
+            }.start()
+            return
+        }
+        lastThumbAt = now
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
+                override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                    DeviceSync.shotOk = true
+                    Thread {
+                        var id: String? = null
+                        try {
+                            val hb = result.hardwareBuffer
+                            val bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
+                            hb.close()
+                            if (bmp != null) id = uploadThumb(bmp, isShort)
+                        } catch (_: Throwable) { }
+                        handler.post { done(id) }
+                    }.start()
+                }
+                override fun onFailure(errorCode: Int) { DeviceSync.shotOk = false; handler.post { done(null) } }
+            })
+        } catch (_: Throwable) { done(null) }
+    }
+
+    // ───────── كرت التحذير الأحمر: "هل تريد المشاهدة؟" (نعم / لا، وكلاهما يطلعه) ─────────
+    private var warnView: View? = null
+    private var warnTimeout: Runnable? = null
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private var warnIsTop = false
+    // خروج ناعم: الكرت ينزلق والخلفية تتلاشى، ثم تنشال النافذة (الإجراء التالي، مثل الرجوع، يصير فوراً)
+    private fun dismissWarnAnimated() {
+        val v = warnView ?: return
+        warnTimeout?.let { handler.removeCallbacks(it) }
+        warnTimeout = null
+        warnView = null
+        v.isClickable = false
+        (v as? ViewGroup)?.getChildAt(0)?.animate()
+            ?.translationY(if (warnIsTop) -dp(80).toFloat() else dp(320).toFloat())?.alpha(0f)?.setDuration(220)
+            ?.setInterpolator(android.view.animation.AccelerateInterpolator(1.4f))?.start()
+        v.animate().alpha(0f).setDuration(240).withEndAction { runCatching { wm.removeView(v) } }.start()
+    }
+
+    private fun clearWarnCard() {
+        warnTimeout?.let { handler.removeCallbacks(it) }
+        warnTimeout = null
+        warnView?.let { v -> runCatching { wm.removeView(v) } }
+        warnView = null
+    }
+
+    private fun appIconAndLabel(pkg: String): Pair<android.graphics.drawable.Drawable?, String> = try {
+        val ai = packageManager.getApplicationInfo(pkg, 0)
+        packageManager.getApplicationIcon(ai) to packageManager.getApplicationLabel(ai).toString()
+    } catch (e: Exception) { null to pkg }
+
+    // التطبيق اللي فعلاً قدام الشاشة = أكبر نافذة تطبيق (النافذة العائمة الصغيرة ما تُحسب)
+    private fun foregroundPkg(): String? = (try {
+        windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .maxByOrNull { val r = Rect(); it.getBoundsInScreen(r); r.width().toLong() * r.height() }
+            ?.root?.packageName?.toString()
+    } catch (e: Exception) { null }) ?: rootInActiveWindow?.packageName?.toString()
+
+    private fun clearFocusedText() {
+        try {
+            val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
+            f.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "") })
+        } catch (_: Exception) { }
+    }
+
+    private fun showWarningCard(forPkg: String? = null, onDone: () -> Unit) {
+        if (warnView != null) return
+        val msg = remoteWarning.ifBlank { "هذا المحتوى غير مسموح" }
+        // شكل الكرت يتبع التطبيق اللي سبّب الحجب (مو آخر نافذة أرسلت حدث، لأن فيديو كيك العائم كان يغيّره)
+        val pkg = forPkg ?: foregroundPkg() ?: lastPkg
+        val isYt = pkg.contains("youtube", true)
+        val (icon, appName) = appIconAndLabel(pkg)
+        fun finish() { if (warnView == null) return; dismissWarnAnimated(); onDone() }
+        fun tv(t: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+            text = t; textSize = size; setTextColor(color); gravity = Gravity.CENTER
+            if (bold) typeface = Typeface.DEFAULT_BOLD
+        }
+        fun btn(label: String, bg: Int, fg: Int, size: Float, padV: Int, r: Int) = TextView(this).apply {
+            text = label; setTextColor(fg); textSize = size; typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER; setPadding(dp(14), dp(padV), dp(14), dp(padV))
+            background = GradientDrawable().apply { setColor(bg); cornerRadius = dp(r).toFloat() }
+            setOnClickListener { finish() }
+        }
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(200, 0, 0, 0))
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            isClickable = true
+        }
+        if (isYt) {
+            // يوتيوب: شريط علوي صغير بشعار يوتيوب
+            val dark = Color.rgb(127, 29, 29)
+            val logo: View = if (icon != null) ImageView(this).apply { setImageDrawable(icon) }
+            else tv("▶", 14f, Color.WHITE).apply { background = GradientDrawable().apply { setColor(Color.RED); cornerRadius = dp(6).toFloat() } }
+            val texts = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(tv(msg, 14f, Color.WHITE, true).apply { gravity = Gravity.START })
+                addView(tv("هل تريد المتابعة؟", 12f, Color.rgb(254, 202, 202)).apply { gravity = Gravity.START })
+            }
+            val banner = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                background = GradientDrawable().apply { setColor(dark); cornerRadius = dp(14).toFloat() }
+                addView(logo, LinearLayout.LayoutParams(dp(34), dp(34)))
+                addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(10), 0, dp(10), 0) })
+                addView(btn("لا", Color.WHITE, dark, 13f, 7, 8), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, dp(6), 0) })
+                addView(btn("نعم", Color.rgb(153, 27, 27), Color.WHITE, 13f, 7, 8))
+            }
+            root.addView(banner, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP).apply { setMargins(dp(14), dp(48), dp(14), 0) })
+        } else {
+            // باقي المنصات: لوحة سفلية فاتحة، وجنبها شعار واسم المنصة
+            val ink = Color.rgb(17, 17, 17)
+            val gray = Color.rgb(102, 102, 102)
+            val badge: View = if (icon != null) ImageView(this).apply { setImageDrawable(icon) }
+            else tv("✋", 24f, Color.rgb(185, 28, 28)).apply { background = GradientDrawable().apply { setColor(Color.rgb(254, 226, 226)); shape = GradientDrawable.OVAL } }
+            val handle = View(this).apply { background = GradientDrawable().apply { setColor(Color.rgb(221, 221, 221)); cornerRadius = dp(2).toFloat() } }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(6), 0, dp(6), 0) } }
+                addView(btn("لا", ink, Color.WHITE, 15f, 12, 12), lp())
+                addView(btn("نعم", Color.rgb(241, 241, 241), ink, 15f, 12, 12), lp())
+            }
+            val r = dp(24).toFloat()
+            val sheet = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(dp(20), dp(12), dp(20), dp(36))
+                background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f) }
+                addView(handle, LinearLayout.LayoutParams(dp(36), dp(4)).apply { setMargins(0, 0, 0, dp(14)) })
+                addView(badge, LinearLayout.LayoutParams(dp(52), dp(52)))
+                addView(tv(appName, 13f, gray).apply { setPadding(0, dp(4), 0, dp(8)) })
+                addView(tv(msg, 17f, ink, true).apply { setPadding(0, 0, 0, dp(4)) })
+                addView(tv("هل تريد المتابعة؟", 14f, gray).apply { setPadding(0, 0, 0, dp(16)) })
+                addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            }
+            root.addView(sheet, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        if (!runCatching { wm.addView(root, lp) }.isSuccess) { onDone(); return }
+        warnView = root
+        warnIsTop = isYt
+        // دخول ناعم: الخلفية تتلاشى والكرت ينزلق (من فوق ليوتيوب، ومن تحت لباقي التطبيقات)
+        root.alpha = 0f
+        root.animate().alpha(1f).setDuration(180).start()
+        root.getChildAt(0)?.let { panel ->
+            panel.translationY = if (isYt) -dp(80).toFloat() else dp(320).toFloat()
+            panel.animate().translationY(0f).setDuration(300).setInterpolator(android.view.animation.DecelerateInterpolator(1.6f)).start()
+        }
+        val t = Runnable { finish() }
+        warnTimeout = t
+        handler.postDelayed(t, 12_000)
+    }
+
+    // ───────── قفل نافذة عائمة / PiP لتطبيق ممنوع ─────────
+    private var lastFloatClose = 0L
+    private fun findCloseNode(n: AccessibilityNodeInfo?, depth: Int = 0): AccessibilityNodeInfo? {
+        if (n == null || depth > 8) return null
+        val re = Regex("close|dismiss|cancel|إغلاق|اغلاق|إلغاء", RegexOption.IGNORE_CASE)
+        val txt = (n.contentDescription?.toString() ?: "") + " " + (n.text?.toString() ?: "") + " " + (n.viewIdResourceName ?: "")
+        val t = (n.text?.toString() ?: "").trim()
+        if (re.containsMatchIn(txt) || t == "×" || t == "✕" || t.equals("x", true)) return n
+        for (i in 0 until n.childCount) { val f = findCloseNode(n.getChild(i), depth + 1); if (f != null) return f }
+        return null
+    }
+
+    private fun closeBlockedFloating(pkg: String) {
+        val w = (try { windows.firstOrNull { !it.isActive && it.root?.packageName?.toString() == pkg } } catch (e: Exception) { null }) ?: return
+        val b = Rect(); w.getBoundsInScreen(b)
+        if (w.root?.performAction(AccessibilityNodeInfo.ACTION_DISMISS) == true) return
+        tapAt(b.exactCenterX(), b.exactCenterY())
+        handler.postDelayed({
+            val r2 = try { windows.firstOrNull { it.root?.packageName?.toString() == pkg }?.root } catch (e: Exception) { null }
+            val close = findCloseNode(r2)
+            if (close != null && clickNode(close)) return@postDelayed
+            val dd = resources.displayMetrics.density
+            tapAt(b.right - 14 * dd, b.top + 14 * dd)
+        }, 450)
+    }
+
+    private fun addActivity(type: String, label: String, kind: String = "", channel: String = "", where: String = "", matched: String = "", thumb: String = "") {
+        if (!DeviceSync.isLoggingAllowed()) return
+        val k = kind.ifBlank { if (norm(label).startsWith(norm("شورتس"))) "شورت" else "فيديو" }
+        val ch = channel.ifBlank { label }
+        Thread {
+            try {
+                val body = org.json.JSONObject().put("type", type).put("kind", k).put("channel", ch).put("label", label)
+                    .put("device", DeviceSync.deviceId(this)).put("deviceName", DeviceSync.deviceName())
+                    .put("where", where).put("matched", matched).put("thumb", thumb)
+                val c = java.net.URL("${RemoteLists.URL_BASE}/activity?pair=${RemoteLists.PAIR}").openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "POST"
+                c.connectTimeout = 8000; c.readTimeout = 8000
+                c.doOutput = true
+                c.setRequestProperty("content-type", "application/json")
+                c.outputStream.use { it.write(body.toString().toByteArray()) }
+                c.responseCode
+                c.disconnect()
+            } catch (e: Exception) { }
+        }.start()
+    }
+
+    private fun saveDiag(status: String, ids: String) {
+        // لا يتم حفظ أي بيانات
+    }
+
+    // لون الغطاء لازم يطابق ثيم يوتيوب نفسه (مو ثيم الجوال)، لأن يوتيوب له إعداد مستقل
+    private var ytDark: Boolean? = null
+    private var lastThemeCheck = 0L
+
+    private fun systemDark() =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private fun coverColor() = if (ytDark ?: systemDark()) Color.rgb(15, 15, 15) else Color.WHITE
+
+    private fun detectYtTheme() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val now = System.currentTimeMillis()
+        if (now - lastThemeCheck < 3000) return
+        lastThemeCheck = now
+        val b = Rect()
+        val yt = windows.firstOrNull { it.root?.packageName?.toString() == YT }
+        if (yt != null) yt.getBoundsInScreen(b)
+        else b.set(0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        val margin = (12 * resources.displayMetrics.density).toInt()
+        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
+            override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                try {
+                    val hb = result.hardwareBuffer
+                    val hw = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)
+                    val bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                    hb.close()
+                    if (bmp != null) {
+                        // نقطة بخلفية شريط يوتيوب السفلي (أقصى اليسار، بدون أيقونات)
+                        val px = bmp.getPixel(3.coerceIn(0, bmp.width - 1), (b.bottom - margin).coerceIn(0, bmp.height - 1))
+                        val lum = (0.299 * Color.red(px) + 0.587 * Color.green(px) + 0.114 * Color.blue(px)) / 255.0
+                        val dark = lum < 0.5
+                        if (dark != ytDark) {
+                            ytDark = dark
+                            covers.forEach { it.setBackgroundColor(coverColor()) }
+                        }
+                    }
+                } catch (_: Throwable) { }
+            }
+            override fun onFailure(errorCode: Int) { }
+        })
+    }
+
+    private fun showCovers(rects: List<Rect>) {
+        ensureWatchdog()
+        detectYtTheme()
+        while (covers.size > rects.size) {
+            runCatching { wm.removeView(covers.removeAt(covers.lastIndex)) }
+        }
+        rects.forEachIndexed { i, r ->
+            val lp = WindowManager.LayoutParams(
+                r.width(), r.height(),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    (if (blockTouch) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE),
+                PixelFormat.OPAQUE
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = r.left
+                y = r.top
+            }
+            if (i < covers.size) {
+                wm.updateViewLayout(covers[i], lp)
+            } else {
+                // نفس لون خلفية يوتيوب عشان يبان فراغ
+                val v = View(this).apply {
+                    setBackgroundColor(coverColor())
+                }
+                wm.addView(v, lp)
+                covers.add(v)
+            }
+        }
+    }
+
+    // ───────── سجل الروابط: أي صفحة يفتحها بالمتصفح (مو بس اللي يكتبها) ─────────
+    private var urlPending = false
+    private var lastUrlLogged = ""
+    private var lastUrlAt = 0L
+    private fun trackUrl(pkg: String) {
+        if (!DeviceSync.isLoggingAllowed()) return
+        val root = rootInActiveWindow ?: return
+        if (root.packageName?.toString() != pkg) return
+        val node = root.findAccessibilityNodeInfosByViewId("$pkg:id/url_bar").firstOrNull() ?: return
+        if (node.isFocused) return // يكتب الحين: SearchLog يسجّله
+        val txt = node.text?.toString()?.trim().orEmpty()
+        if (txt.length < 4 || !txt.contains('.') || txt.contains(' ')) return
+        val now = System.currentTimeMillis()
+        if (txt == lastUrlLogged && now - lastUrlAt < 5 * 60_000) return
+        lastUrlLogged = txt; lastUrlAt = now
+        addActivity("رابط", txt.take(200), channel = pkg)
+    }
+
+    // ───────── كنس النوافذ العائمة: الفيديو العائم ما يرسل أحداث، فنفحص كل 3 ثواني ─────────
+    private val floatSweep = object : Runnable {
+        override fun run() {
+            try {
+                if (DeviceSync.isBlockingOnThisDevice()) {
+                    val bad = blockedApps()
+                    if (bad.isNotEmpty()) {
+                        val floating = windows.filter { !it.isActive }.mapNotNull { it.root?.packageName?.toString() }.firstOrNull { it in bad }
+                        if (floating != null && System.currentTimeMillis() - lastFloatClose > 2500) { lastFloatClose = System.currentTimeMillis(); closeBlockedFloating(floating) }
+                    }
+                }
+            } catch (_: Exception) { }
+            handler.postDelayed(this, 3000)
+        }
+    }
+
+    // ───────── حارس الأغطية: يتحقق كل 450ms طول ما فيه غطاء، فإذا اختفى الكلام المحظور أو طلعنا من اليوتيوب ينشال الغطاء ─────────
+    private var watchdogOn = false
+    private val coverWatchdog = object : Runnable {
+        override fun run() {
+            if (covers.isEmpty() && genericCovers.isEmpty()) { watchdogOn = false; return }
+            try {
+                val act = windows.firstOrNull { it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION }?.root?.packageName?.toString()
+                if (act != null && act != YT && act != packageName && !isScanApp(act)) { clearCovers(); clearGenericCovers() }
+                else if (covers.isNotEmpty()) update() else updateGeneric()
+            } catch (_: Exception) { }
+            handler.postDelayed(this, 450)
+        }
+    }
+    private fun ensureWatchdog() { if (!watchdogOn) { watchdogOn = true; handler.postDelayed(coverWatchdog, 450) } }
+
+    private fun clearCovers() {
+        handler.removeCallbacks(refresh)
+        pending = false
+        covers.forEach { runCatching { wm.removeView(it) } }
+        covers.clear()
+    }
+
+    override fun onServiceConnected() {
+        StatusJob.schedule(this)
+        handler.removeCallbacks(floatSweep); handler.postDelayed(floatSweep, 3000)
+        super.onServiceConnected()
+        try {
+            applyLists()
+            DeviceSync.maybeHeartbeat(this, force = true)
+            maybePull(true)
+            handler.post(usagePush)
+            handler.post(syncLoop)
+        } catch (e: Exception) { }
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        clearWarnCard()
+        clearCovers()
+        clearGenericCovers()
+        handler.removeCallbacks(usagePush)
+        handler.removeCallbacks(syncLoop)
+        return super.onUnbind(intent)
+    }
+
+    // تحديث دوري للقوائم والنبض وطلب مشاهدة الشاشة حتى لو الجهاز ساكن بدون أحداث جديدة
+    // كل دالة عندها حد أدنى داخلي لوقتها (maybePull=3د، maybeHeartbeat=5د، maybeScreenPoll=10ث)
+    // فاستدعاؤها كل 10 ثواني آمن وما يكثر الطلبات، وبنفس الوقت يخلي طلب الشاشة يتلقّط بسرعة
+    private val syncLoop = object : Runnable {
+        override fun run() {
+            try {
+                maybePull(); DeviceSync.maybeHeartbeat(this@BlockerService); DeviceSync.maybeScreenPoll(this@BlockerService)
+            } catch (e: Exception) { }
+            handler.postDelayed(this, 5_000)
+        }
+    }
+
+    override fun onInterrupt() {
+        clearWarnCard()
+        clearCovers()
+        clearGenericCovers()
+    }
+
+    // ───────── رفع تقرير استخدام التطبيقات دوريًا عشان شاشة أمي تشوفه ─────────
+    private val usagePush = object : Runnable {
+        override fun run() {
+            UsageReport.push(this@BlockerService)
+            handler.postDelayed(this, 20 * 60_000)
+        }
+    }
+}
