@@ -4,7 +4,14 @@
   "main": "worker.js",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
+  // لا تمسح المتغيرات/الأسرار اللي حاطها بلوحة Cloudflare (مثل ADMIN_KEY) عند كل نشر
+  "keep_vars": true,
+  // الكرون (يملأ نتائج المباريات؛ الكود نفسه يشتغل مرة كل 5 تشغيلات تقريباً)
+  "triggers": { "crons": ["*/2 * * * *"] },
   // تخزين قوائم الحجب (يُنشأ تلقائياً عند النشر؛ لو اشتكى، أنشئ KV يدوياً وحط "id" هنا)
-  "kv_namespaces": [{ "binding": "LISTS" }]
+  "kv_namespaces": [{ "binding": "LISTS" }],
+  // بث الشاشة بالذاكرة (بدون كتابات KV). الفئة SQLite-backed عشان تشتغل بالخطة المجانية
+  "durable_objects": { "bindings": [{ "name": "SCREEN", "class_name": "ScreenHub" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ScreenHub"] }]
   // ما يحتاج أي مفتاح أو Secret (يستخدم ESPN غير الرسمي)
 }

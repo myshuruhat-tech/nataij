@@ -167,6 +167,8 @@ function precacheDays() {
 // كل مرة يعبي دفعة صغيرة بس (تحت حد الـ 50 طلب فرعي) ويكمل من وين وقف آخر مرة.
 async function runPrecache(env) {
   if (!env.LISTS) return;
+  // توفير كتابات KV (الحد المجاني 1000/يوم): ما نشتغل إلا مرة كل 5 تشغيلات (~10 دقايق لو الكرون كل دقيقتين)
+  if (Math.floor(Date.now() / 120000) % 5 !== 0) return;
   const slugs = Object.keys(LEAGUES);
   const days = precacheDays();
   const today = days[2];
@@ -562,10 +564,19 @@ async function handleScreen(request, env, url) {
   const device = url.searchParams.get("device") || "";
   if (!PAIR_RE.test(pair)) return json({ error: "bad_pair" }, 400);
   if (!DEV_ID_RE.test(device)) return json({ error: "bad_id" }, 400);
-  if (!env.LISTS) return json({ error: "no_kv" }, 500);
   const noStore = { "cache-control": "no-store" };
   const isAdmin = !!env.ADMIN_KEY && request.headers.get("x-admin-key") === env.ADMIN_KEY;
   const sub = url.pathname.slice("/screen".length); // "", "/live", "/frame"
+  // الأفضل: كل حالة البث (طلب/بث/إطار) تعيش بذاكرة Durable Object، بدون أي كتابة في KV
+  if (env.SCREEN) {
+    const stub = env.SCREEN.get(env.SCREEN.idFromName(`${pair}:${device}`));
+    const h = new Headers();
+    h.set("x-admin", isAdmin ? "1" : "0");
+    const init = { method: request.method, headers: h };
+    if (request.method === "POST") init.body = await request.text();
+    return stub.fetch(`https://hub${sub || "/"}`, init);
+  }
+  if (!env.LISTS) return json({ error: "no_kv" }, 500);
 
   if (sub === "") {
     const key = `screen:${pair}:${device}`;
@@ -615,6 +626,44 @@ async function handleScreen(request, env, url) {
   }
 
   return json({ error: "method" }, 405);
+}
+
+
+// ───────── Durable Object: حالة بث الشاشة بالذاكرة فقط (لا يكتب بـ KV ولا بالتخزين) ─────────
+// لو انطفى الـ DO من الخمول يضيع آخر إطار/طلب، وهذا مقبول لأنها بيانات مؤقتة (ثواني).
+export class ScreenHub {
+  constructor(state, env) { this.reqTs = 0; this.liveTs = 0; this.frame = null; }
+  async fetch(request) {
+    const noStore = { "cache-control": "no-store" };
+    const sub = new URL(request.url).pathname.replace(/\/$/, "");
+    const admin = request.headers.get("x-admin") === "1";
+    const m = request.method;
+    const now = Date.now();
+    if (sub === "") {
+      if (m === "GET") return json({ requested: now - this.reqTs < 120000 }, 200, noStore);
+      if (m === "POST") { if (!admin) return json({ error: "unauthorized" }, 401); this.reqTs = now; return json({ ok: true }, 200, noStore); }
+      if (m === "DELETE") { this.reqTs = 0; return json({ ok: true }, 200, noStore); }
+    }
+    if (sub === "/live") {
+      if (m === "GET") return json({ live: now - this.liveTs < 15000 }, 200, noStore);
+      if (m === "POST") { if (!admin) return json({ error: "unauthorized" }, 401); this.liveTs = now; return json({ ok: true }, 200, noStore); }
+    }
+    if (sub === "/frame") {
+      if (m === "POST") {
+        let body; try { body = JSON.parse(await request.text()); } catch (e) { return json({ error: "bad_json" }, 400); }
+        const jpg = body && typeof body.jpg === "string" ? body.jpg : "";
+        if (!jpg || jpg.length > 900000) return json({ error: "bad_frame" }, 400);
+        this.frame = { ts: now, jpg };
+        return json({ ok: true }, 200, noStore);
+      }
+      if (m === "GET") {
+        if (!admin) return json({ error: "unauthorized" }, 401);
+        const f = this.frame;
+        return json({ jpg: f && now - f.ts < 20000 ? f.jpg : null }, 200, noStore);
+      }
+    }
+    return json({ error: "method" }, 405);
+  }
 }
 
 export default {
