@@ -1,17 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Optional: granted manually from system settings, for app usage reporting -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
-    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
-    <!-- Notification on a goal for a followed team -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -22,32 +14,14 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true" />
-
-        <activity-alias
-            android:name=".Launcher"
-            android:enabled="true"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher"
-            android:roundIcon="@mipmap/ic_launcher_round"
-            android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity-alias>
+        </activity>
 
-        <activity android:name=".ResultsActivity" android:exported="false" />
-        <activity android:name=".MatchActivity" android:exported="false" />
-        <activity android:name=".ScreenShareActivity" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-        <service android:name=".ScreenCaptureService" android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
-
-        <service android:name=".ThumbProjectionService" android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
-
-        <receiver android:name=".GoalCheckReceiver" android:exported="false" />
+        <activity android:name=".ScreenViewActivity" android:exported="false" />
 
         <service
             android:name=".BlockerService"
@@ -61,6 +35,5 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_config" />
         </service>
-        <service android:name="com.example.ytblocker.StatusJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false" />
     </application>
 </manifest>
